@@ -323,7 +323,7 @@ class Dezoomify():
                 filepath = getFilePath(self.zoomLevel, col, row, self.ext) #construct the filename (zero indexed level)
                 url = imageDir + '/' + 'TileGroup%d'%tileGroup + '/' + filepath
 
-                destination = self.tiledir + '/' + str(col) + '_' + str(row) + '.' + self.ext # name of the tile file on disk
+                destination = os.path.join(self.tiledir, str(col) + '_' + str(row) + '.' + self.ext) # name of the tile file on disk
                 
                 q.put((url, destination)) # add the file to the download queue
         
@@ -360,7 +360,7 @@ class Dezoomify():
                     m = re.search('\\.' + self.ext + '$', line[1])
                     if not m:
                         line[1] += '.' + self.ext
-                    self.outNames.append(os.path.dirname(self.out) + '/' + line[1])
+                    self.outNames.append(os.path.join(os.path.dirname(self.out), line[1]))
                 else:
                     continue
                 
@@ -386,12 +386,10 @@ class Dezoomify():
             if self.debug:
                 print(( 'INF: Created temporary image storage directory: %s' % self.tiledir))
 
-    def joinTiles(self, destination):
-        
-        destination = destination 
+    def joinTiles(self, destination): 
     
         def tileAt(col, row):
-            return self.tiledir + '/' + str(col) + '_' + str(row) + '.' + self.ext 
+            return os.path.join(self.tiledir, str(col) + '_' + str(row) + '.' + self.ext)
         
         if self.debug:
             print( 'INF: Creating the base image at ' + destination )
@@ -405,10 +403,12 @@ class Dezoomify():
                     print( 'INF: Adding tile (row ' + str(row) +', col ' + str(col) + ') to the image' )
                 cmd = [self.jpegtran, '-copy', 'all', '-drop', '+' + str(col*self.tileSize) + '+' + str(row*self.tileSize), tileAt(col, row), '-outfile', destination, destination]
                 subprocess.call(cmd)
-                time.sleep(0.25) # wait a little to make sure the output file is not still in use
+                # wait a little to make sure the output file is not still in use
+                # need to find a better solution
+                time.sleep(0.2)
                
         # make a final optimization pass
-        cmd = [self.jpegtran, '-copy', 'all', '-optimize', destination]
+        cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', destination, destination]
         subprocess.call(cmd)
 
 
