@@ -1,0 +1,9 @@
+This is a patch to the Independent JPEG Group's image compression library version 8c (16-Jan-2011). http://www.ijg.org/
+It improves the drop transform's functionality in cases where the dropped image's right or bottom edge lies exactly on the other image's right/bottom border.
+Previously the non-MCU-size blocks on the right/bottom image edge would not have been copied at all. Now they are.
+This patch includes the "droppatch" (which adds the drop functionality and allows extending the image by cropping outside the image borders) from http://jpegclub.org/jpegtran/.
+Actual modifications have only been made to "transupp.c".
+
+Any questions, comments, suggestions, etc. are welcome at http://commons.wikimedia.org/wiki/User_talk:Quibik.
+
+2011-10-03
