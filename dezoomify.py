@@ -11,7 +11,12 @@ DIRECTORY OR A LIST OF THESE, AND RECONSTRUCT THE FULL RESOLUTION IMAGE
 This software is licensed under the Expat License (also called the MIT license).
 """
 
-import sys, time, os
+import sys
+
+if sys.version_info[0] < 3:
+    sys.exit("ERR: This program requires Python 3 to run.")
+
+import time, os
 import re
 import urllib.request, urllib.parse
 import optparse
@@ -53,7 +58,7 @@ def main():
         exit(-1)
 
     if (opts.out is None) :
-        print("ERR: The output file (-o) must be given\n")
+        print("ERR: The output file '-o' must be given\n")
         parser.print_help()
         exit(-1)
 
