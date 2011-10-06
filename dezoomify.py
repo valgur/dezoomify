@@ -37,11 +37,11 @@ def main():
                              help='zoomlevel to grab image at (can be useful if some of a higher zoomlevel is corrupted or missing)' )
     parser.add_option('-s', dest='store', action='store_true', default=False,\
                              help='save all tiles locally' )
-    parser.add_option('-j', dest='jpegtran', action='store_true', default=os.path.join('.', 'jpegtran'),\
+    parser.add_option('-j', dest='jpegtran', action='store', default=os.path.join('.', 'jpegtran'),\
                              help='location of jpegtran executable' )
     parser.add_option('-x', dest='nodownload', action='store_true', default=False,\
                              help='create the image from previously downloaded files stored with -s (can be useful when an error occurred during tile joining)' )
-    parser.add_option('-t', dest='nthreads', action='store_true', default=4,\
+    parser.add_option('-t', dest='nthreads', action='store', default=4,\
                              help='how many downloads will be made in parallel (default: 4)' )
 
     (opts, args) = parser.parse_args()
