@@ -113,7 +113,7 @@ def getUrl(url):
 
     code = response.code
     headers = response.headers # headers object
-    contents = response.read().decode() # contents of the URL (HTML, javascript, css, img, etc.)
+    contents = response.read().decode(errors='ignore') # contents of the URL (HTML, javascript, css, img, etc.)
     return code, headers, contents
 
 class Dezoomify():
@@ -130,7 +130,7 @@ class Dezoomify():
         """
 
         try:
-            content = urllib.request.urlopen(url).read().decode()
+            content = urllib.request.urlopen(url).read().decode(errors='ignore')
         except:
             print(("ERR: Specified directory not found. Check the URL.\nException: %s " % sys.exc_info()[1]))
             sys.exit()
