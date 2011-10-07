@@ -49,8 +49,8 @@ def main():
                              help='location of jpegtran executable' )
     parser.add_option('-x', dest='nodownload', action='store_true', default=False,\
                              help='create the image from previously downloaded files stored with -s (can be useful when an error occurred during tile joining)' )
-    parser.add_option('-t', dest='nthreads', action='store', default=4,\
-                             help='how many downloads will be made in parallel (default: 4)' )
+    parser.add_option('-t', dest='nthreads', action='store', default=16,\
+                             help='how many downloads will be made in parallel (default: 16)' )
 
     (opts, args) = parser.parse_args()
 
@@ -445,7 +445,7 @@ class Dezoomify():
         self.out = opts.out
         self.jpegtran = opts.jpegtran
         self.nodownload = opts.nodownload
-        self.nthreads = opts.nthreads
+        self.nthreads = int(opts.nthreads)
 
         if self.nodownload:
             self.store = True
