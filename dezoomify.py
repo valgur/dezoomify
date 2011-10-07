@@ -22,8 +22,11 @@ import urllib.request, urllib.parse
 import optparse
 import tempfile, shutil
 import subprocess
+import queue
+import threading
 
 from math import ceil, floor
+
 
 def main():
 
@@ -57,7 +60,7 @@ def main():
         parser.print_help()
         exit(-1)
 
-    if (opts.out is None) :
+    if (opts.out is None):
         print("ERR: The output file '-o' must be given\n")
         parser.print_help()
         exit(-1)
@@ -100,7 +103,6 @@ def getUrl(url):
     url -- the url to fetch
     """
 
-
     # spoof the user-agent and referrer, in case that matters.
     req_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/525.13 (KHTML, like Gecko) Chrome/0.A.B.C Safari/525.13',
@@ -118,6 +120,100 @@ def getUrl(url):
 
 class Dezoomify():
 
+    def getImage(self, imageDir, outputDestination):
+
+        def newDownloadThread():
+            t = threading.Thread(target=downloader)
+            t.daemon = True
+            t.start()
+
+        def downloader():
+            if downloadQueue.empty():
+                return
+            url, col, row = downloadQueue.get()
+            destination = tileName(col, row)
+            if self.debug:
+                print("\tINF: Downloading tile: " + destination)
+            urllib.request.urlretrieve(url, destination)
+            joinQueue.put((col, row))
+            if not downloadQueue.empty():
+                newDownloadThread()
+
+        def tileName(col, row):
+            return os.path.join(self.tileDir, str(col) + '_' + str(row) + '.' + self.ext)
+
+        downloadQueue = queue.Queue()
+        joinQueue = queue.Queue()
+        for col in range(self.xTiles):
+            for row in range(self.yTiles):
+
+                if self.nodownload:
+                    joinQueue.put((col, row))
+                    continue
+
+                tileIndex = self.getTileIndex(self.zoomLevel, col, row)
+                tileGroup = tileIndex // self.tileSize
+
+                if self.debug:
+                    print(("\tINF: Adding image number (row, col) to queue: " + str(row).rjust(2) + ', ' + str(col).rjust(2) + ': Index: '+ str(tileIndex).rjust(3) + ', Tilegroup: %d'% tileGroup))
+
+                filepath = getFilePath(self.zoomLevel, col, row, self.ext) # construct the filename (zero indexed level)
+                url = imageDir + '/' + 'TileGroup%d' % tileGroup + '/' + filepath
+
+                downloadQueue.put((url, col, row)) # add the file to the download queue
+
+        # start predetermined number of downloader threads
+        for i in range(self.nthreads):
+            newDownloadThread()
+
+        # do tile joining in parallel with the downloading
+
+        totalTiles = self.xTiles * self.yTiles
+        numJoined = 0
+
+        # use two temporary files for the joining process
+        tmpimgs = [None, None]
+        for i in range(2):
+            fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+            tmpimgs[i] = fhandle.name
+            fhandle.close()
+            if self.debug:
+                print( '\tINF: Created temporary image file: ' + tmpimgs[i] )
+        activeTmp = 0 # the index of current temp image to be used for input, toggles between 0 and 1
+
+        while numJoined < totalTiles:
+            # wait for a download to finish before continuing
+            while joinQueue.empty():
+                if threading.active_count() == 1 and joinQueue.empty():
+                    print("ERR: Tile downloading stopped prematurely!")
+                    os.unlink(tmpimgs[0])
+                    os.unlink(tmpimgs[1])
+                    return 
+                time.sleep(0.05)
+
+            col, row = joinQueue.get()
+
+            # as the very first step create an (almost) empty image with the target dimensions using jpegtran
+            if numJoined == 0:
+                cmd = [self.jpegtran, '-copy', 'all', '-crop', '%dx%d+0+0' % (self.width, self.height), '-outfile', tmpimgs[activeTmp], tileName(col, row)]
+                subprocess.call(cmd)
+
+            if self.debug:
+                print( '\tINF: Adding tile (row ' + str(row) +', col ' + str(col) + ') to the image' )
+            cmd = [self.jpegtran, '-copy', 'all', '-drop', '+%d+%d' % (col*self.tileSize, row*self.tileSize), tileName(col, row), '-outfile', tmpimgs[(activeTmp+1)%2], tmpimgs[activeTmp]]
+            subprocess.call(cmd)
+
+            activeTmp = (activeTmp+1) % 2 # toggle between the two temp images
+            numJoined += 1
+
+        # make a final optimization pass and save the image to the output file
+        cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', outputDestination, tmpimgs[activeTmp]]
+        subprocess.call(cmd)
+
+        # delete the temporary images
+        os.unlink(tmpimgs[0])
+        os.unlink(tmpimgs[1])
+
     def getImageDirectory(self, url):
         """
         Gets the Zoomify image base directory for the image tiles. This function
@@ -131,7 +227,7 @@ class Dezoomify():
 
         try:
             content = urllib.request.urlopen(url).read().decode(errors='ignore')
-        except:
+        except Exception:
             print(("ERR: Specified directory not found. Check the URL.\nException: %s " % sys.exc_info()[1]))
             sys.exit()
 
@@ -139,7 +235,7 @@ class Dezoomify():
         m = re.search('zoomifyImagePath=([^\'"&]*)[\'"&]', content)
         if m:
             imagePath = m.group(1)
-        
+
         if not imagePath:
             m = re.search('ZoomifyCache/[^\'"&.]+\\.\\d+x\\d+', content)
             if m:
@@ -179,7 +275,6 @@ class Dezoomify():
     def getMaxZoom(self):
         """Construct a list of all zoomlevels with sizes in tiles"""
 
-        zoomLevel = 0 #here, 0 is the deepest level
         width = int(ceil(self.maxWidth/float(self.tileSize))) #width of full image in tiles
         height = int(ceil(self.maxHeight/float(self.tileSize))) #height
 
@@ -295,57 +390,11 @@ class Dezoomify():
 
         return index
 
-    def getTiles(self, imageDir):
-        import queue
-        import threading
-        
-        def newThread():
-            t = threading.Thread(target=downloader)
-            t.daemon = True
-            t.start()
-        
-        def downloader():
-            if q.empty():
-                return
-            url, destination = q.get()
-            if self.debug:
-                print("\tINF: Downloading image: " + destination)
-            urllib.request.urlretrieve(url, destination)
-            if not q.empty():
-                newThread()
-            
-        
-        q = queue.Queue()
-        for col in range(self.xTiles):
-            for row in range(self.yTiles):
-
-                tileIndex = self.getTileIndex(self.zoomLevel, col, row)
-                tileGroup = tileIndex // 256
-
-                if self.debug:
-                    print(("\tINF: Adding image number (row, col) to queue: " + str(row).rjust(2) +', ' + str(col).rjust(2)  + ': Index: '+ str(tileIndex).rjust(3) + ', Tilegroup: %d'% tileGroup))
-
-                filepath = getFilePath(self.zoomLevel, col, row, self.ext) #construct the filename (zero indexed level)
-                url = imageDir + '/' + 'TileGroup%d'%tileGroup + '/' + filepath
-
-                destination = os.path.join(self.tiledir, str(col) + '_' + str(row) + '.' + self.ext) # name of the tile file on disk
-                
-                q.put((url, destination)) # add the file to the download queue
-        
-        for i in range(self.nthreads):
-            newThread()
-        # wait for downloads to finish
-        while threading.active_count() > 1:
-            time.sleep(0.2)
-
     def getUrls(self, opts): #returns a list of base URLs for the given Dezoomify object(s)
 
         if not opts.list: #if we are dealing with a single object
-            if not opts.base:
-                self.imageDirs = [ self.getImageDirectory(opts.url) ]  # locate the base directory of the zoomify tile images
-            else:
-                self.imageDirs = [ opts.url ]         # it was given directly
-            self.outNames = [self.out]
+            self.imageDirs = [ opts.url ]
+            self.outNames = [ self.out ]
 
         else: #if we are dealing with a file with a list of objects
             listFile = open( opts.url, 'r')
@@ -355,7 +404,7 @@ class Dezoomify():
             i = 1
             for line in listFile:
                 line = line.strip().split(' ', 1)
-                
+
                 if len(line) == 1:
                     root, ext = os.path.splitext(self.out)
                     self.outNames.append(root + '%03d' % i + ext)
@@ -368,11 +417,8 @@ class Dezoomify():
                     self.outNames.append(os.path.join(os.path.dirname(self.out), line[1]))
                 else:
                     continue
-                
-                if not opts.base:
-                    self.imageDirs.append( self.getImageDirectory(line[0]) )  # locate the base directory of the zoomify tile images
-                else:
-                    self.imageDirs.append( line[0] )         # it was given directly
+
+                self.imageDirs.append( line[0] )
 
 
     def setupDirectory(self, destination):
@@ -385,36 +431,11 @@ class Dezoomify():
                 if self.debug:
                     print(( 'INF: Creating image storage directory: %s' % root))
                 os.makedirs(root)
-            self.tiledir = root
+            self.tileDir = root
         else:
-            self.tiledir = tempfile.mkdtemp(prefix='dezoomify_')
+            self.tileDir = tempfile.mkdtemp(prefix='dezoomify_')
             if self.debug:
-                print(( 'INF: Created temporary image storage directory: %s' % self.tiledir))
-
-    def joinTiles(self, destination): 
-    
-        def tileAt(col, row):
-            return os.path.join(self.tiledir, str(col) + '_' + str(row) + '.' + self.ext)
-        
-        if self.debug:
-            print( 'INF: Creating the base image at ' + destination )
-
-        cmd = [self.jpegtran, '-copy', 'all', '-crop', str(self.maxWidth) + 'x' + str(self.maxHeight) + '+0+0', '-outfile', destination, tileAt(0, 0)]
-        subprocess.call(cmd)
-        
-        for col in range(self.xTiles):
-            for row in range(self.yTiles):
-                if self.debug:
-                    print( 'INF: Adding tile (row ' + str(row) +', col ' + str(col) + ') to the image' )
-                cmd = [self.jpegtran, '-copy', 'all', '-drop', '+' + str(col*self.tileSize) + '+' + str(row*self.tileSize), tileAt(col, row), '-outfile', destination, destination]
-                subprocess.call(cmd)
-                # wait a little to make sure the output file is not still in use
-                # need to find a better solution
-                time.sleep(0.2)
-               
-        # make a final optimization pass
-        cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', destination, destination]
-        subprocess.call(cmd)
+                print(( 'INF: Created temporary image storage directory: %s' % self.tileDir))
 
 
     def __init__(self, opts):
@@ -425,7 +446,7 @@ class Dezoomify():
         self.jpegtran = opts.jpegtran
         self.nodownload = opts.nodownload
         self.nthreads = opts.nthreads
-        
+
         if self.nodownload:
             self.store = True
 
@@ -435,21 +456,21 @@ class Dezoomify():
         for imageDir in self.imageDirs:
 
             destination = self.outNames[i]
-            
+
+            if not opts.base:
+                imageDir = self.getImageDirectory(imageDir)  # locate the base directory of the zoomify tile images
+
             self.getProperties(imageDir, opts.zoomLevel)       # inspect the ImageProperties.xml file to get properties, and derive the rest
 
             self.setupDirectory(destination) # create the directory where the tiles are stored
 
-            if not self.nodownload:
-                self.getTiles(imageDir)            # find and download the tiles
-
-            self.joinTiles(destination) # join tiles and create the dezoomified file
+            self.getImage(imageDir, destination) # download and join tiles to create the dezoomified file
 
             if self.debug:
                 print( 'INF: Dezoomifed image created and saved to ' + destination )
-            
+
             if not self.store:
-                shutil.rmtree(self.tiledir)
+                shutil.rmtree(self.tileDir)
                 if self.debug:
                     print( 'INF: Erased the temporary directory and its contents' )
 
