@@ -1,0 +1,12 @@
+==Dezoomify GUI==
+
+===Tiled image panel===
+
+tiled_image_panel.py defines a wxPython widget to handle tiled images. 
+It also contains a test program, just run it with 
+ python tiled_image_panel.py
+
+imageConverter.py is used for PIL/wx image conversions.
+
+===TTK solution===
+??

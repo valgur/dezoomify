@@ -7,6 +7,15 @@ Dezoomify is the work of:
     * inductiveload <inductiveload@gmail.com>
     * Martin Valgur <quibik@gmail.com> 
     
+==Installing==
+
+Dezoomify should not require any installation. Simply run
+    python3 dezoomify.py <parameters>
+    
+The IJG JPEG components are distributed with this program as Windows and
+Linux binaries. If you wish to compile yourself, follow the instructions
+that come with that code in the jpeg-8c_patch subdirectory.
+    
 ==Contact and support==
 
 Contact relating to the software should be made at the Sourceforge
