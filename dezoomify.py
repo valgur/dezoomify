@@ -113,6 +113,12 @@ def getUrl(url):
     Keyword arguments:
     url -- the url to fetch
     """
+    
+    # Escape the path part of the URL so spaces in it would not confuse the server.
+    scheme, netloc, path, qs, anchor = urllib.parse.urlsplit(url)
+    path = urllib.parse.quote(path, '/%')
+    qs = urllib.parse.quote_plus(qs, ':&=')
+    url = urllib.parse.urlunsplit((scheme, netloc, path, qs, anchor))
 
     # spoof the user-agent and referrer, in case that matters.
     req_headers = {
@@ -289,7 +295,7 @@ class ImageUntiler():
             destination = self.outNames[i]
 
             if not opts.base:
-                self.imageDir = self.getImageDirectory(self.imageDir)  # locate the base directory of the zoomify tile images
+                self.imageDir = self.getImageDirectory(imageDir)  # locate the base directory of the zoomify tile images
             else:
                 self.imageDir = imageDir
 
@@ -423,10 +429,11 @@ class UntilerDezoomify(ImageUntiler):
         #READ THE XML FILE AND RETRIEVE THE ZOOMIFY PROPERTIES NEEDED TO RECONSTRUCT (WIDTH, HEIGHT AND TILESIZE)
         xmlUrl = imageDir + '/ImageProperties.xml' #this file contains information about the image tiles
 
+        if self.debug:
+            print(('INF: xmlUrl: ' + xmlUrl))
         code, headers, content = getUrl(xmlUrl) #get the file's contents
         #example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
 
-        print (xmlUrl)
         m = re.search('WIDTH="(\d+)"', content)
         if m:
             self.maxWidth = int(m.group(1))
