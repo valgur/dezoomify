@@ -66,11 +66,11 @@ def main():
         print("ERR: The output file '-o' must be given\n")
         parser.print_help()
         exit(-1)
-        
+
     if (opts.jpegtran == ''): #we need to locate jpegtran
         mod_dir = os.path.dirname(__file__) #location of this script
         jpegtran = os.path.join( mod_dir, 'jpegtran' )
-        
+
         if os.path.exists(jpegtran):
             opts.jpegtran = jpegtran
         else:
@@ -113,7 +113,7 @@ def getUrl(url):
     Keyword arguments:
     url -- the url to fetch
     """
-    
+
     # Escape the path part of the URL so spaces in it would not confuse the server.
     scheme, netloc, path, qs, anchor = urllib.parse.urlsplit(url)
     path = urllib.parse.quote(path, '/%')
@@ -151,36 +151,34 @@ class ImageUntiler():
             destination = tileName(col, row)
             if self.debug:
                 print("\tINF: Downloading tile: " + destination)
-            urllib.request.urlretrieve(url, destination)
-            joinQueue.put((col, row))
+
+            try:
+                urllib.request.urlretrieve(url, destination)
+                joinQueue.put((col, row))
+            except ValueError:
+                print("\tERR: Tile (row {}, col {}) does not exist on the server (URL: {})".format(row, col, url))
+
             if not downloadQueue.empty():
                 newDownloadThread()
 
         def tileName(col, row):
-            return os.path.join(self.tileDir, str(col) + '_' + str(row) + '.' + self.ext)
+            return os.path.join(self.tileDir, "{}_{}.{}".format(col, row, self.ext))
 
         downloadQueue = queue.Queue()
         joinQueue = queue.Queue()
         for col in range(self.xTiles):
             for row in range(self.yTiles):
-
                 if self.nodownload:
                     joinQueue.put((col, row))
                     continue
-                    
                 url = self.getImageTileURL(col, row)
-
-                downloadQueue.put((url, col, row)) # add the file to the download queue
+                downloadQueue.put((url, col, row))
 
         # start predetermined number of downloader threads
         for i in range(self.nthreads):
             newDownloadThread()
 
         # do tile joining in parallel with the downloading
-
-        totalTiles = self.xTiles * self.yTiles
-        numJoined = 0
-
         # use two temporary files for the joining process
         tmpimgs = [None, None]
         for i in range(2):
@@ -191,17 +189,9 @@ class ImageUntiler():
                 print( '\tINF: Created temporary image file: ' + tmpimgs[i] )
         activeTmp = 0 # the index of current temp image to be used for input, toggles between 0 and 1
 
-        while numJoined < totalTiles:
-            # wait for a download to finish before continuing
-            while joinQueue.empty():
-                if threading.active_count() == 1 and joinQueue.empty():
-                    print("ERR: Tile downloading stopped prematurely!")
-                    os.unlink(tmpimgs[0])
-                    os.unlink(tmpimgs[1])
-                    return 
-                time.sleep(0.05)
-
-            col, row = joinQueue.get()
+        numJoined = 0
+        while threading.active_count() > 1 or not joinQueue.empty():
+            col, row = joinQueue.get(block=True)
 
             # as the very first step create an (almost) empty image with the target dimensions using jpegtran
             if numJoined == 0:
@@ -209,12 +199,18 @@ class ImageUntiler():
                 subprocess.call(cmd)
 
             if self.debug:
-                print( '\tINF: Adding tile (row ' + str(row) +', col ' + str(col) + ') to the image' )
+                print( "\tINF: Adding tile (row {:3}, col {:3}) to the image".format(row, col) )
             cmd = [self.jpegtran, '-copy', 'all', '-drop', '+%d+%d' % (col*self.tileSize, row*self.tileSize), tileName(col, row), '-outfile', tmpimgs[(activeTmp+1)%2], tmpimgs[activeTmp]]
             subprocess.call(cmd)
 
             activeTmp = (activeTmp+1) % 2 # toggle between the two temp images
             numJoined += 1
+        
+        numMissing = self.xTiles * self.yTiles - numJoined
+        if numMissing != 0:
+            print( "Warning: Image is missing {0} tile{1}. "
+                   "You might want to download the image at a different zoom level (currently {2}) to get the missing part{1}."
+                   .format(numMissing, '' if numMissing == 1 else 's', self.zoomLevel) )
 
         # make a final optimization pass and save the image to the output file
         cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', outputDestination, tmpimgs[activeTmp]]
@@ -223,8 +219,6 @@ class ImageUntiler():
         # delete the temporary images
         os.unlink(tmpimgs[0])
         os.unlink(tmpimgs[1])
-
-
 
 
     def getUrls(self, opts): #returns a list of base URLs for the given Dezoomify object(s)
@@ -314,9 +308,9 @@ class ImageUntiler():
                     print( 'INF: Erased the temporary directory and its contents' )
 
             i += 1
-            
+
 class UntilerDezoomify(ImageUntiler):
-        
+
     def getTileIndex(self, level, x, y):
         """
         Get the zoomify index of a tile in a given level, at given co-ordinates
@@ -336,7 +330,7 @@ class UntilerDezoomify(ImageUntiler):
                      int(ceil( floor(self.height/pow(2, self.maxZoom - i)) / self.tileSize ) )
 
         return index
-        
+
     def getMaxZoom(self):
         """Construct a list of all zoomlevels with sizes in tiles"""
 
@@ -356,7 +350,7 @@ class UntilerDezoomify(ImageUntiler):
                 height = int(ceil(height/2.0))
 
         self.levels.reverse() # make the 0th level the smallestt zoom, and higher levels, higher zoom
-        
+
     def getImageDirectory(self, url):
         """
         Gets the Zoomify image base directory for the image tiles. This function
@@ -383,7 +377,7 @@ class UntilerDezoomify(ImageUntiler):
             m = re.search('ZoomifyCache/[^\'"&.]+\\.\\d+x\\d+', content)
             if m:
                 imagePath = m.group(0)
-        
+
         # For HTML5 Zoomify.
         if not imagePath:
             m = re.search('(["\'])([^"]+)/TileGroup0[^"]*\\1', content)
@@ -420,7 +414,7 @@ class UntilerDezoomify(ImageUntiler):
             if self.debug:
                 print(('INF: Found image directory: ' + imageDir))
             return imageDir
-            
+
     def getProperties(self, imageDir, zoomLevel):
         """
         Retreive the XML properties file and extract the needed information.
@@ -499,7 +493,7 @@ class UntilerDezoomify(ImageUntiler):
             print(( '\tWidth (in tiles):  %d (at given level: %d)' % (self.maxxTiles, self.xTiles) ))
             print(( '\tHeight (in tiles): %d (at given level: %d)' % (self.maxyTiles, self.yTiles) ))
             print(( '\tTotal tiles:       %d (to be retreived: %d)' % (self.maxxTiles * self.maxyTiles, self.xTiles * self.yTiles)))
-            
+
     def getImageTileURL(self, col, row):
         tileIndex = self.getTileIndex(self.zoomLevel, col, row)
         tileGroup = tileIndex // self.tileSize
@@ -509,7 +503,7 @@ class UntilerDezoomify(ImageUntiler):
 
         filepath = getFilePath(self.zoomLevel, col, row, self.ext) # construct the filename (zero indexed level)
         url = self.imageDir + '/' + 'TileGroup%d' % tileGroup + '/' + filepath
-        
+
         return url
 
 if __name__ == "__main__":
