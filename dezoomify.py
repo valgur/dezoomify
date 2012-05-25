@@ -503,13 +503,8 @@ class UntilerDezoomify(ImageUntiler):
     def getImageTileURL(self, col, row):
         tileIndex = self.getTileIndex(self.zoomLevel, col, row)
         tileGroup = tileIndex // self.tileSize
-
-        if self.debug:
-            print(("\tINF: Adding image number (row, col) to queue: " + str(row).rjust(2) + ', ' + str(col).rjust(2) + ': Index: '+ str(tileIndex).rjust(3) + ', Tilegroup: %d'% tileGroup))
-
         filepath = getFilePath(self.zoomLevel, col, row, self.ext) # construct the filename (zero indexed level)
-        url = self.imageDir + '/' + 'TileGroup%d' % tileGroup + '/' + filepath
-
+        url = '{}/TileGroup{}/{}'.format(self.imageDir, tileGroup, filepath)
         return url
 
 if __name__ == "__main__":
