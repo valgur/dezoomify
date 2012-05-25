@@ -383,6 +383,12 @@ class UntilerDezoomify(ImageUntiler):
             m = re.search('(["\'])([^"]+)/TileGroup0[^"]*\\1', content)
             if m:
                 imagePath = m.group(2)
+        
+        # Another JavaScript/HTML5 Zoomify version (v1.8).
+        if not imagePath:
+            m = re.search('showImage\([^,]+, (["\'])([^"\']+)\\1', content)
+            if m:
+                imagePath = m.group(2)
 
         if not imagePath:
             print("ERR: Source directory not found. Ensure the given URL contains a Zoomify object.")
