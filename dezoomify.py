@@ -302,7 +302,7 @@ class ImageUntiler():
                 self.log.error("No jpegtran excecutable found at the script's directory. "
                                "Use -j option to set its location.")
                 exit()
-        
+
         if not os.path.exists(self.jpegtran):
             self.log.error("Jpegtran excecutable not found. "
                            "Use -j option to set its location.")
@@ -361,27 +361,25 @@ class UntilerDezoomify(ImageUntiler):
 
         return index
 
-    def getMaxZoom(self):
+    def getZoomLevels(self):
         """Construct a list of all zoomlevels with sizes in tiles"""
-
-        width = int(ceil(self.maxWidth / float(self.tileSize)))  # width of full image in tiles
-        height = int(ceil(self.maxHeight / float(self.tileSize)))  # height
-
+        locWidth = self.maxWidth
+        locHeight = self.maxHeight
         self.levels = []
-
         while True:
-
-            self.levels.append((width, height))
-
-            if width == 1 and height == 1:
+            widthInTiles = int(ceil(locWidth / float(self.tileSize)))
+            heightInTiles = int(ceil(locHeight / float(self.tileSize)))
+            self.levels.append((widthInTiles, heightInTiles))
+            
+            if widthInTiles != 1 and heightInTiles != 1:
                 break
-            else:
-                # each zoom level is a factor of two smaller
-                width = int(ceil(width / 2.0))
-                height = int(ceil(height / 2.0))
+            
+            locWidth = int(locWidth / 2.)
+            locHeight = int(locHeight / 2.)
 
-        # make the 0th level the smallestt zoom, and higher levels, higher zoom
+        # make the 0th level the smallest zoom, and higher levels, higher zoom
         self.levels.reverse()
+        self.log.debug("self.levels = {}".format(self.levels))
 
     def getImageDirectory(self, url):
         """
@@ -501,7 +499,7 @@ class UntilerDezoomify(ImageUntiler):
 
         # PROCESS PROPERTIES TO GET ADDITIONAL DERIVABLE PROPERTIES
 
-        self.getMaxZoom()  # get one-indexed maximum zoom level
+        self.getZoomLevels()  # get one-indexed maximum zoom level
 
         self.maxZoom = len(self.levels)
 
