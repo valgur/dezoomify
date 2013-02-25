@@ -28,7 +28,7 @@ import shutil
 import threading
 import urllib.request
 import urllib.parse
-
+import platform
 
 def main():
 
@@ -289,14 +289,28 @@ class ImageUntiler():
         logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
         self.log = logging.getLogger(__name__)
 
-        if (self.jpegtran is None):  # we need to locate jpegtran
+        if self.jpegtran is None:  # we need to locate jpegtran
             mod_dir = os.path.dirname(__file__)  # location of this script
-            jpegtran = os.path.join(mod_dir, 'jpegtran')
+            if platform.system() == 'Windows':
+                jpegtran = os.path.join(mod_dir, 'jpegtran.exe')
+            else:
+                jpegtran = os.path.join(mod_dir, 'jpegtran')
 
             if os.path.exists(jpegtran):
                 self.jpegtran = jpegtran
             else:
-                self.log.error("No jpegtran given, and no file found at %s" % jpegtran)
+                self.log.error("No jpegtran excecutable found at the script's directory. "
+                               "Use -j option to set its location.")
+                exit()
+        
+        if not os.path.exists(self.jpegtran):
+            self.log.error("Jpegtran excecutable not found. "
+                           "Use -j option to set its location.")
+            exit()
+        elif not os.access(self.jpegtran, os.X_OK):
+            self.log.error("{} does not have execute permission."
+                           .format(self.jpegtran))
+            exit()
 
         self.getUrlList(args)
 
@@ -316,7 +330,7 @@ class ImageUntiler():
             self.setupDirectory(destination)
 
             # download and join tiles to create the dezoomified file
-            self.getImage(self.imageDir, destination)
+            self.getImage(destination)
 
             self.log.info("Dezoomifed image created and saved to " + destination)
 
