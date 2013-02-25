@@ -132,9 +132,16 @@ def getUrl(url):
 
     code = response.code
     headers = response.headers # headers object
-    contents = response.read().decode(errors='ignore') # contents of the URL (HTML, javascript, css, img, etc.)
+    contents = response.read() # contents of the URL (HTML, javascript, css, img, etc.)
     return code, headers, contents
 
+def downloadUrl(url, destination):
+    """
+    Copy a network object denoted by a URL to a local file.
+    """
+    with open(destination, 'wb') as f:
+        f.write(getUrl(url)[2])
+    
 class ImageUntiler():
 
     def getImage(self, imageDir, outputDestination):
@@ -153,7 +160,7 @@ class ImageUntiler():
                 print("\tINF: Downloading tile: " + destination)
 
             try:
-                urllib.request.urlretrieve(url, destination)
+                downloadUrl(url, destination)
                 joinQueue.put((col, row))
             except ValueError:
                 print("\tERR: Tile (row {}, col {}) does not exist on the server (URL: {})".format(row, col, url))
@@ -363,7 +370,7 @@ class UntilerDezoomify(ImageUntiler):
         """
 
         try:
-            content = urllib.request.urlopen(url).read().decode(errors='ignore')
+            content = getUrl(url)[2].decode(errors='ignore')
         except Exception:
             print(("ERR: Specified directory not found. Check the URL.\nException: %s " % sys.exc_info()[1]))
             sys.exit()
@@ -438,6 +445,7 @@ class UntilerDezoomify(ImageUntiler):
         if self.debug:
             print(('INF: xmlUrl: ' + xmlUrl))
         code, headers, content = getUrl(xmlUrl) #get the file's contents
+        content = content.decode(errors='ignore')
         #example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
 
         m = re.search('WIDTH="(\d+)"', content)
