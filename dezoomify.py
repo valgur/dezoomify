@@ -26,6 +26,7 @@ import subprocess
 import tempfile
 import shutil
 import threading
+import urllib.error
 import urllib.request
 import urllib.parse
 import platform
@@ -69,21 +70,23 @@ def main():
     UntilerDezoomify(args)
 
 
-def urlConcat(url1, url2):
-    """simple concatenation routine for parts of urls
+def urlConcat(*args):
+    """Join any arbitrary strings into a forward-slash delimited list.
+    Do not strip leading / from first element, nor trailing / from last element."""
+    if len(args) == 0:
+        return ""
+    elif len(args) == 1:
+        return str(args[0])
+    
+    args = [str(arg).replace("\\", "/") for arg in args]
+    work = [args[0]]
+    for arg in args[1:]:
+        if arg.startswith("/"):
+            work.append(arg[1:])
+        else:
+            work.append(arg)
 
-    Keyword arguments:
-    url1 -- the first part of the url to join
-    url2 -- the second part
-    """
-
-    if url1[-1] == '/':
-        url1 = url1[0:-1]
-
-    if url2[0] == '/':
-        url2 = url2[1:]
-
-    return url1 + '/' + url2
+    return '/'.join(work)
 
 
 def getUrl(url):
@@ -132,30 +135,23 @@ def downloadUrl(url, destination):
 class ImageUntiler():
 
     def getImage(self, outputDestination):
-
-        def newDownloadThread():
-            t = threading.Thread(target=downloader)
-            t.daemon = True
-            t.start()
-
         def downloader():
-            if downloadQueue.empty():
-                return
-            url, col, row = downloadQueue.get()
-            destination = localTileName(col, row)
-            self.log.info("Downloading tile: " + destination)
-
-            try:
-                downloadUrl(url, destination)
-                joinQueue.put((col, row))
-            except ValueError:
-                self.log.warning(
-                    "Tile (row {}, col {}) does not exist on the server (URL: {})"
-                    .format(row, col, url)
-                )
-
-            if not downloadQueue.empty():
-                newDownloadThread()
+            while True:
+                try:
+                    url, col, row = downloadQueue.get(False)
+                    destination = localTileName(col, row)
+                    self.log.info("Downloading tile (row {:3}, col {:3})".format(row, col))
+                    downloadUrl(url, destination)
+                    joinQueue.put((col, row))
+                except queue.Empty:
+                    return
+                except urllib.error.HTTPError as e:
+                    self.log.warning(
+                        "{}. Tile {} (row {}, col {}) does not exist on the server."
+                        .format(e, url, row, col)
+                    )
+                except KeyboardInterrupt:
+                    exit()
 
         def localTileName(col, row):
             return os.path.join(self.tileDir, "{}_{}.{}".format(col, row, self.ext))
@@ -166,13 +162,16 @@ class ImageUntiler():
             for row in range(self.yTiles):
                 if self.nodownload:
                     joinQueue.put((col, row))
-                    continue
-                url = self.getImageTileURL(col, row)
-                downloadQueue.put((url, col, row))
+                else:
+                    url = self.getImageTileURL(col, row)
+                    downloadQueue.put((url, col, row))
 
         # start predetermined number of downloader threads
-        for i in range(self.nthreads):
-            newDownloadThread()
+        if not self.nodownload:
+            for i in range(self.nthreads):
+                t = threading.Thread(target=downloader)
+                t.daemon = True
+                t.start()
 
         # do tile joining in parallel with the downloading
         # use two temporary files for the joining process
@@ -181,47 +180,55 @@ class ImageUntiler():
             fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
             tmpimgs[i] = fhandle.name
             fhandle.close()
-            self.log.info("Created temporary image file: " + tmpimgs[i])
+            self.log.debug("Created temporary image file: " + tmpimgs[i])
         # the index of current temp image to be used for input, toggles between 0 and 1
         activeTmp = 0
 
-        numJoined = 0
-        while threading.active_count() > 1 or not joinQueue.empty():
-            col, row = joinQueue.get(block=True)
+        try:
+            numJoined = 0
+            while threading.active_count() > 1 or not joinQueue.empty():
+                try:
+                    col, row = joinQueue.get(block=True, timeout=1)
+    
+                    # as the very first step create an (almost) empty image with the target dimensions using jpegtran
+                    if numJoined == 0:
+                        cmd = [self.jpegtran, '-copy', 'all', '-crop',
+                               '%dx%d+0+0' % (self.width, self.height),
+                               '-outfile', tmpimgs[activeTmp], localTileName(col, row)]
+                        subprocess.call(cmd)
+    
+                    self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
+                    cmd = [self.jpegtran, '-copy', 'all', '-drop',
+                           '+%d+%d' % (col * self.tileSize, row * self.tileSize),
+                           localTileName(col, row), '-outfile',
+                           tmpimgs[(activeTmp + 1) % 2], tmpimgs[activeTmp]]
+                    subprocess.call(cmd)
+    
+                    activeTmp = (activeTmp + 1) % 2  # toggle between the two temp images
+                    numJoined += 1
+                except queue.Empty:
+                    pass
 
-            # as the very first step create an (almost) empty image with the target dimensions using jpegtran
-            if numJoined == 0:
-                cmd = [self.jpegtran, '-copy', 'all', '-crop',
-                       '%dx%d+0+0' % (self.width, self.height),
-                       '-outfile', tmpimgs[activeTmp], localTileName(col, row)]
-                subprocess.call(cmd)
+            numMissing = self.xTiles * self.yTiles - numJoined
+            if numMissing > 0:
+                self.log.warning(
+                    "Image is missing {0} tile{1}. "
+                    "You might want to download the image at a different zoom level "
+                    "(currently {2}) to get the missing part{1}."
+                    .format(numMissing, '' if numMissing == 1 else 's', self.zoomLevel)
+                )
 
-            self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
-            cmd = [self.jpegtran, '-copy', 'all', '-drop',
-                   '+%d+%d' % (col * self.tileSize, row * self.tileSize),
-                   localTileName(col, row), '-outfile',
-                   tmpimgs[(activeTmp + 1) % 2], tmpimgs[activeTmp]]
+            # make a final optimization pass and save the image to the output file
+            cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', outputDestination, tmpimgs[activeTmp]]
             subprocess.call(cmd)
 
-            activeTmp = (activeTmp + 1) % 2  # toggle between the two temp images
-            numJoined += 1
-
-        numMissing = self.xTiles * self.yTiles - numJoined
-        if numMissing != 0:
-            self.log.warning(
-                "Image is missing {0} tile{1}. "
-                "You might want to download the image at a different zoom level "
-                "(currently {2}) to get the missing part{1}."
-                .format(numMissing, '' if numMissing == 1 else 's', self.zoomLevel)
-            )
-
-        # make a final optimization pass and save the image to the output file
-        cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', outputDestination, tmpimgs[activeTmp]]
-        subprocess.call(cmd)
-
-        # delete the temporary images
-        os.unlink(tmpimgs[0])
-        os.unlink(tmpimgs[1])
+        finally:
+            # delete the temporary images
+            os.unlink(tmpimgs[0])
+            os.unlink(tmpimgs[1])
+            if not self.store:
+                shutil.rmtree(self.tileDir)
+                self.log.info("Erased the temporary directory and its contents")
 
     def getUrlList(self, args):  # returns a list of base URLs for the given Dezoomify object(s)
 
@@ -334,11 +341,6 @@ class ImageUntiler():
 
             self.log.info("Dezoomifed image created and saved to " + destination)
 
-            if not self.store:
-                shutil.rmtree(self.tileDir)
-                self.log.info("Erased the temporary directory and its contents")
-
-
 class UntilerDezoomify(ImageUntiler):
 
     def getTileIndex(self, level, x, y):
@@ -371,7 +373,7 @@ class UntilerDezoomify(ImageUntiler):
             heightInTiles = int(ceil(locHeight / float(self.tileSize)))
             self.levels.append((widthInTiles, heightInTiles))
             
-            if widthInTiles != 1 and heightInTiles != 1:
+            if widthInTiles == 1 and heightInTiles == 1:
                 break
             
             locWidth = int(locWidth / 2.)
@@ -468,7 +470,7 @@ class UntilerDezoomify(ImageUntiler):
         # NEEDED TO RECONSTRUCT (WIDTH, HEIGHT AND TILESIZE)
 
         # this file contains information about the image tiles
-        xmlUrl = imageDir + '/ImageProperties.xml'
+        xmlUrl = urlConcat(imageDir, 'ImageProperties.xml')
 
         self.log.info("xmlUrl=" + xmlUrl)
         content = getUrl(xmlUrl)[2]
@@ -543,7 +545,8 @@ class UntilerDezoomify(ImageUntiler):
         """
         tileIndex = self.getTileIndex(self.zoomLevel, col, row)
         tileGroup = tileIndex // self.tileSize
-        url = '{}/TileGroup{}/{}-{}-{}.{}'.format(self.imageDir, tileGroup, self.zoomLevel, col, row, self.ext)
+        url = urlConcat(self.imageDir, 'TileGroup{}'.format(tileGroup),
+                '{}-{}-{}.{}'.format(self.zoomLevel, col, row, self.ext))
         return url
 
 if __name__ == "__main__":
