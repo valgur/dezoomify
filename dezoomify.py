@@ -20,16 +20,24 @@ from math import ceil, floor
 import argparse
 import logging
 import os
-import queue
 import re
 import subprocess
 import tempfile
 import shutil
-import threading
 import urllib.error
 import urllib.request
 import urllib.parse
 import platform
+import itertools
+from multiprocessing.pool import ThreadPool
+from time import sleep
+
+# Progressbar module is optional but recommended.
+progressbar = None
+try:
+    import progressbar
+except ImportError:
+    pass
 
 def main():
 
@@ -40,21 +48,21 @@ def main():
     parser.add_argument('out', action='store',
                         help='the output file for the image')
     parser.add_argument('-b', dest='base', action='store_true', default=False,
-                        help='the URL is the base directory for the Zoomify tile structure')
+        help='the URL is the base directory for the Zoomify tile structure')
     parser.add_argument('-l', dest='list', action='store_true', default=False,
                         help='the URL refers to a local file containing a list of URLs '
                         'or base directories to dezoomify. The output directory and '
-                        'default filename are derived from the -o value. The list format '
+                        'default filenames are derived from the "out" parameter. The list format '
                         'is "<url> [filename]". Extensions are added automatically to the '
-                        'filename, if they are missing.')
-    parser.add_argument('-v', '--verbose', dest='verbose', action='count', default=0,
+                        'filenames, if they are missing.')
+    parser.add_argument('-v', dest='verbose', action='count', default=0,
                         help="increase verbosity (specify multiple times for more)")
     parser.add_argument('-z', dest='zoomLevel', action='store', default=False,
                         help='zoomlevel to grab image at (can be useful if some of a '
                         'higher zoomlevel is corrupted or missing)')
     parser.add_argument('-s', dest='store', action='store_true', default=False,
                         help='save all tiles in the local folder instead of the '
-                        'system temporary directory')
+                        'system\'s temporary directory')
     parser.add_argument('-j', dest='jpegtran', action='store',
                         help='location of jpegtran executable (assumed to be in the '
                         'same directory as this script by default)')
@@ -70,32 +78,14 @@ def main():
     UntilerDezoomify(args)
 
 
-def urlConcat(*args):
-    """Join any arbitrary strings into a forward-slash delimited list.
-    Do not strip leading / from first element, nor trailing / from last element."""
-    if len(args) == 0:
-        return ""
-    elif len(args) == 1:
-        return str(args[0])
-    
-    args = [str(arg).replace("\\", "/") for arg in args]
-    work = [args[0]]
-    for arg in args[1:]:
-        if arg.startswith("/"):
-            work.append(arg[1:])
-        else:
-            work.append(arg)
-
-    return '/'.join(work)
-
-
-def getUrl(url):
+def openUrl(url):
     """
-    getUrl accepts a URL string and return the server response code,
-    response headers, and contents of the file
+    Similar to urllib.request.urlopen,
+    except some additional preparation is done on the URL and 
+    the user-agent and referrer are spoofed.
 
     Keyword arguments:
-    url -- the url to fetch
+    url -- the URL to open
     """
 
     # Escape the path part of the URL so spaces in it would not confuse the server.
@@ -106,8 +96,7 @@ def getUrl(url):
 
     # spoof the user-agent and referrer, in case that matters.
     req_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) '
-                      'AppleWebKit/525.13 (KHTML, like Gecko) Chrome/0.A.B.C Safari/525.13',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64; rv:24.0) Gecko/20100101 Firefox/24.0',
         'Referer': 'http://google.com'
     }
 
@@ -116,138 +105,179 @@ def getUrl(url):
     # create an opener object
     opener = urllib.request.build_opener()
     # open a connection and receive the http response headers + contents
-    response = opener.open(request)
-
-    code = response.code
-    headers = response.headers  # headers object
-    contents = response.read()  # contents of the URL (HTML, javascript, css, img, etc.)
-    return code, headers, contents
-
+    return opener.open(request)
 
 def downloadUrl(url, destination):
     """
     Copy a network object denoted by a URL to a local file.
     """
-    with open(destination, 'wb') as f:
-        f.write(getUrl(url)[2])
+    with openUrl(url) as response, open(destination, 'wb') as out_file:
+        shutil.copyfileobj(response, out_file)
 
 
 class ImageUntiler():
 
     def getImage(self, outputDestination):
-        def downloader():
-            while True:
-                try:
-                    url, col, row = downloadQueue.get(False)
-                    destination = localTileName(col, row)
-                    self.log.info("Downloading tile (row {:3}, col {:3})".format(row, col))
-                    downloadUrl(url, destination)
-                    joinQueue.put((col, row))
-                except queue.Empty:
-                    return
-                except urllib.error.HTTPError as e:
-                    self.log.warning(
-                        "{}. Tile {} (row {}, col {}) does not exist on the server."
-                        .format(e, url, row, col)
-                    )
-                except KeyboardInterrupt:
-                    exit()
-
+        """
+        Downloads image tiles and joins them.
+        These processes are done in parallel.
+        """
+        numTiles = self.xTiles * self.yTiles
+        numDownloaded = 0
+        numJoined = 0
+        
+        # Progressbars for downloading and joining.
+        if progressbar:
+            downloadProgressbar = progressbar.ProgressBar( 
+                widgets = ['Downloading tiles: ',
+                           progressbar.Counter(), '/', str(numTiles), ' ',
+                           progressbar.Bar('>', left='[', right=']'), ' ',
+                           progressbar.ETA()],
+                maxval = numTiles
+            )
+            downloadProgressbar.start()
+        
+            joiningProgressbar = progressbar.ProgressBar( 
+                widgets = ['Joining tiles: ',
+                           progressbar.Counter(), '/', str(numTiles), ' ',
+                           progressbar.Bar('>', left='[', right=']'), ' ',
+                           progressbar.ETA()],
+                maxval = numTiles
+            )
+        
         def localTileName(col, row):
             return os.path.join(self.tileDir, "{}_{}.{}".format(col, row, self.ext))
+        
+        def download(tilePosition):
+            col, row = tilePosition
+            url = self.getImageTileURL(col, row)
+            destination = localTileName(col, row)
+            if not progressbar:
+                self.log.info("Downloading tile (row {:3}, col {:3})".format(row, col))
+            try:
+                downloadUrl(url, destination)
+            except urllib.error.HTTPError as e:
+                self.log.warning(
+                    "{}. Tile {} (row {}, col {}) does not exist on the server."
+                    .format(e, url, row, col)
+                )
+                return (None, None)
+            return tilePosition
 
-        downloadQueue = queue.Queue()
-        joinQueue = queue.Queue()
-        for col in range(self.xTiles):
-            for row in range(self.yTiles):
-                if self.nodownload:
-                    joinQueue.put((col, row))
-                else:
-                    url = self.getImageTileURL(col, row)
-                    downloadQueue.put((url, col, row))
-
-        # start predetermined number of downloader threads
+        tilePositions = itertools.product(range(self.xTiles), range(self.yTiles))
         if not self.nodownload:
-            for i in range(self.nthreads):
-                t = threading.Thread(target=downloader)
-                t.daemon = True
-                t.start()
+            pool = ThreadPool(processes=self.nthreads)
+            downloadedIterator = pool.imap_unordered(download, tilePositions)
+        else:
+            downloadedIterator = tilePositions
+            numDownloaded = numTiles
 
-        # do tile joining in parallel with the downloading
-        # use two temporary files for the joining process
+        # Do tile joining in parallel with the downloading.
+        # Use two temporary files for the joining process.
         tmpimgs = [None, None]
         for i in range(2):
-            fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+            fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', dir=self.tileDir, delete=False)
             tmpimgs[i] = fhandle.name
             fhandle.close()
             self.log.debug("Created temporary image file: " + tmpimgs[i])
-        # the index of current temp image to be used for input, toggles between 0 and 1
+
+        # The index of current temp image to be used for input, toggles between 0 and 1.
         activeTmp = 0
 
+        # Join tiles into a single image in parallel to them being downloaded.
         try:
-            numJoined = 0
-            while threading.active_count() > 1 or not joinQueue.empty():
-                try:
-                    col, row = joinQueue.get(block=True, timeout=1)
-    
-                    # as the very first step create an (almost) empty image with the target dimensions using jpegtran
-                    if numJoined == 0:
-                        cmd = [self.jpegtran, '-copy', 'all', '-crop',
-                               '%dx%d+0+0' % (self.width, self.height),
-                               '-outfile', tmpimgs[activeTmp], localTileName(col, row)]
-                        subprocess.call(cmd)
-    
+            subproc = None # Popen class of the most recently called subprocess.
+            for i, (col, row) in enumerate(downloadedIterator):
+                if col is None: continue # Tile failed to download.
+                
+                if not progressbar:
                     self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
-                    cmd = [self.jpegtran, '-copy', 'all', '-drop',
-                           '+%d+%d' % (col * self.tileSize, row * self.tileSize),
-                           localTileName(col, row), '-outfile',
-                           tmpimgs[(activeTmp + 1) % 2], tmpimgs[activeTmp]]
-                    subprocess.call(cmd)
-    
-                    activeTmp = (activeTmp + 1) % 2  # toggle between the two temp images
-                    numJoined += 1
-                except queue.Empty:
-                    pass
+                
+                # As the very first step create an (almost) empty image with the target dimensions.
+                if i == 0:
+                    subproc = subprocess.Popen([self.jpegtran,
+                        '-copy', 'all',
+                        '-crop', '{:d}x{:d}+0+0'.format(self.width, self.height),
+                        '-outfile', tmpimgs[activeTmp],
+                        localTileName(col, row)
+                    ])
+                    subproc.wait()
+                
+                subproc = subprocess.Popen([self.jpegtran,
+                    '-copy', 'all',
+                    '-drop', '+{:d}+{:d}'.format(col * self.tileSize, row * self.tileSize), localTileName(col, row),
+                    '-outfile', tmpimgs[(activeTmp + 1) % 2],
+                    tmpimgs[activeTmp]
+                ])
+                subproc.wait()
 
-            numMissing = self.xTiles * self.yTiles - numJoined
+                activeTmp = (activeTmp + 1) % 2  # toggle between the two temp images
+                
+                numJoined += 1
+                if not self.nodownload:
+                    numDownloaded = downloadedIterator._index
+                if progressbar:
+                    if numDownloaded < numTiles:
+                        downloadProgressbar.update(numDownloaded)
+                    elif not downloadProgressbar.finished:
+                        downloadProgressbar.finish()
+                        joiningProgressbar.start()
+                    else:
+                        joiningProgressbar.update(numJoined)
+
+            # Make a final optimization pass and save the image to the output file.
+            subproc = subprocess.Popen([self.jpegtran,
+                '-copy', 'all',
+                '-optimize',
+                '-outfile', outputDestination,
+                tmpimgs[activeTmp]
+            ])
+            subproc.wait()
+            
+            numMissing = numTiles - numJoined
             if numMissing > 0:
                 self.log.warning(
-                    "Image is missing {0} tile{1}. "
+                    "Image '{3}' is missing {0} tile{1}. "
                     "You might want to download the image at a different zoom level "
                     "(currently {2}) to get the missing part{1}."
-                    .format(numMissing, '' if numMissing == 1 else 's', self.zoomLevel)
+                    .format(numMissing, '' if numMissing == 1 else 's', self.zoomLevel,
+                            outputDestination)
                 )
+            if progressbar:
+                joiningProgressbar.finish()
 
-            # make a final optimization pass and save the image to the output file
-            cmd = [self.jpegtran, '-copy', 'all', '-optimize', '-outfile', outputDestination, tmpimgs[activeTmp]]
-            subprocess.call(cmd)
-
+        except KeyboardInterrupt:
+            # Kill the jpegtran subprocess.
+            if subproc and subproc.poll() is None:
+                subproc.kill()
+            sleep(0.5) # Wait for the file handles to be released.
+            raise
         finally:
-            # delete the temporary images
+            # Delete the temporary images.
             os.unlink(tmpimgs[0])
             os.unlink(tmpimgs[1])
-            if not self.store:
-                shutil.rmtree(self.tileDir)
-                self.log.info("Erased the temporary directory and its contents")
 
-    def getUrlList(self, args):  # returns a list of base URLs for the given Dezoomify object(s)
+    def getUrlList(self, url, use_list):
+        """
+        Return a list of URLs to process and their respective output file names.
+        """
 
-        if not args.list:  # if we are dealing with a single object
-            self.imageDirs = [args.url]
+        if not use_list:  # if we are dealing with a single object
+            self.imageUrls = [url]
             self.outNames = [self.out]
 
         else:  # if we are dealing with a file with a list of objects
-            listFile = open(args.url, 'r')
-            self.imageDirs = []  # empty list of directories
+            listFile = open(url, 'r')
+            self.imageUrls = []  # empty list of directories
             self.outNames = []
 
             i = 1
             for line in listFile:
-                line = line.strip().split(' ', 1)
+                line = line.strip().split('\t', 1)
 
                 if len(line) == 1:
                     root, ext = os.path.splitext(self.out)
-                    self.outNames.append(root + '%03d' % i + ext)
+                    self.outNames.append("{}{:3d}{}".format(root, i, ext))
                     i += 1
                 elif len(line) == 2:
                     # allow filenames to lack extensions
@@ -258,7 +288,7 @@ class ImageUntiler():
                 else:
                     continue
 
-                self.imageDirs.append(line[0])
+                self.imageUrls.append(line[0])
 
     def setupDirectory(self, destination):
         # if we will save the tiles, set up the directory to save in
@@ -267,14 +297,15 @@ class ImageUntiler():
             root, ext = os.path.splitext(destination)
 
             if not os.path.exists(root):
-                self.log.info("Creating image storage directory: %s" % root)
+                self.log.info("Creating image storage directory: {}".format(root))
                 os.makedirs(root)
             self.tileDir = root
         else:
             self.tileDir = tempfile.mkdtemp(prefix='dezoomify_')
-            self.log.info("Created temporary image storage directory: %s" % self.tileDir)
+            self.log.info("Created temporary image storage directory: {}".format(self.tileDir))
 
     def __init__(self, args):
+        
         self.verbose = int(args.verbose)
         self.ext = 'jpg'
         self.store = args.store
@@ -311,7 +342,7 @@ class ImageUntiler():
                 exit()
 
         if not os.path.exists(self.jpegtran):
-            self.log.error("Jpegtran excecutable not found. "
+            self.log.error("jpegtran excecutable not found. "
                            "Use -j option to set its location.")
             exit()
         elif not os.access(self.jpegtran, os.X_OK):
@@ -319,25 +350,32 @@ class ImageUntiler():
                            .format(self.jpegtran))
             exit()
 
-        self.getUrlList(args)
-
-        for i, imageDir in enumerate(self.imageDirs):
+        self.getUrlList(args.url, args.list)
+        
+        for i, imageUrl in enumerate(self.imageUrls):
             destination = self.outNames[i]
+            if len(self.imageUrls) > 1:
+                print("Processing image {} ({}/{})...".format(destination, i+1, len(self.imageUrls)))
 
             if not args.base:
                 # locate the base directory of the zoomify tile images
-                self.imageDir = self.getImageDirectory(imageDir)
+                self.imageDir = self.getImageDirectory(imageUrl)
             else:
                 self.imageDir = imageDir
 
-            # inspect the ImageProperties.xml file to get properties, and derive the rest
-            self.getProperties(self.imageDir, args.zoomLevel)
-
-            # create the directory where the tiles are stored
-            self.setupDirectory(destination)
-
-            # download and join tiles to create the dezoomified file
-            self.getImage(destination)
+            try:
+                # inspect the ImageProperties.xml file to get properties, and derive the rest
+                self.getProperties(self.imageDir, args.zoomLevel)
+    
+                # create the directory where the tiles are stored
+                self.setupDirectory(destination)
+    
+                # download and join tiles to create the dezoomified file
+                self.getImage(destination)
+            finally: 
+                if not self.store:
+                    shutil.rmtree(self.tileDir)
+                    self.log.info("Erased the temporary directory and its contents")
 
             self.log.info("Dezoomifed image created and saved to " + destination)
 
@@ -395,11 +433,11 @@ class UntilerDezoomify(ImageUntiler):
         """
 
         try:
-            content = getUrl(url)[2].decode(errors='ignore')
+            content = openUrl(url).read().decode(errors='ignore')
         except Exception:
             self.log.error(
                 "Specified directory not found. Check the URL.\n"
-                "Exception: %s " % sys.exc_info()[1]
+                "Exception: {} ".format(sys.exc_info()[1])
             )
             sys.exit()
 
@@ -428,32 +466,13 @@ class UntilerDezoomify(ImageUntiler):
         if not imagePath:
             self.log.error("Source directory not found. Ensure the given URL contains a Zoomify object.")
             sys.exit()
-        else:
-            self.log.info("Found zoomifyImagePath: %s" % imagePath)
-
-            netloc = urllib.parse.urlparse(imagePath).netloc
-            if not netloc:  # the given zoomifyPath is relative from the base url
-
-                # split the given url into parts
-                parsedURL = urllib.parse.urlparse(url)
-
-                # remove the last bit of path, if it has a "." (i.e. it is a file, not a directory)
-                pathParts = parsedURL.path.split('/')
-                m = re.search('\.', pathParts[-1])
-                if m:
-                    del(pathParts[-1])
-                path = '/'.join(pathParts)
-
-                # reconstruct the url with the new path, and without queries, params and fragments
-                url = urllib.parse.urlunparse([parsedURL.scheme, parsedURL.netloc, path, None, None, None])
-
-                imageDir = urlConcat(url, imagePath)  # add the relative url to the current url
-
-            else:  # the zoomify path is absolute
-                imageDir = imagePath
-
-            self.log.info("Found image directory: " + imageDir)
-            return imageDir
+            
+        self.log.info("Found zoomifyImagePath: {}".format(imagePath))
+        
+        imagePath = urllib.parse.unquote(imagePath)
+        imageDir = urllib.parse.urljoin(url, imagePath)
+        imageDir = imageDir.rstrip('/') + '/'
+        return imageDir
 
     def getProperties(self, imageDir, zoomLevel):
         """
@@ -470,10 +489,10 @@ class UntilerDezoomify(ImageUntiler):
         # NEEDED TO RECONSTRUCT (WIDTH, HEIGHT AND TILESIZE)
 
         # this file contains information about the image tiles
-        xmlUrl = urlConcat(imageDir, 'ImageProperties.xml')
+        xmlUrl = urllib.parse.urljoin(imageDir, 'ImageProperties.xml')
 
         self.log.info("xmlUrl=" + xmlUrl)
-        content = getUrl(xmlUrl)[2]
+        content = openUrl(xmlUrl).read()
         # get the file's contents
         content = content.decode(errors='ignore')
         # example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
@@ -516,12 +535,12 @@ class UntilerDezoomify(ImageUntiler):
                 self.zoomLevel = self.maxZoom - 1
                 self.log.warning(
                     "The requested zoom level is not available, "
-                    "defaulting to maximum (%d)" % self.zoomLevel
+                    "defaulting to maximum ({:d})".format(self.zoomLevel)
                 )
 
         # GET THE SIZE AT THE RQUESTED ZOOM LEVEL
-        self.width = self.maxWidth / 2 ** (self.maxZoom - self.zoomLevel - 1)
-        self.height = self.maxHeight / 2 ** (self.maxZoom - self.zoomLevel - 1)
+        self.width = int(self.maxWidth / 2 ** (self.maxZoom - self.zoomLevel - 1))
+        self.height = int(self.maxHeight / 2 ** (self.maxZoom - self.zoomLevel - 1))
 
         # GET THE NUMBER OF TILES AT THE REQUESTED ZOOM LEVEL
         self.maxxTiles = self.levels[-1][0]
@@ -530,13 +549,13 @@ class UntilerDezoomify(ImageUntiler):
         self.xTiles = self.levels[self.zoomLevel][0]
         self.yTiles = self.levels[self.zoomLevel][1]
 
-        self.log.info('\tMax zoom level:    %d (working zoom level: %d)' % (self.maxZoom - 1, self.zoomLevel))
-        self.log.info('\tWidth (overall):   %d (at given zoom level: %d)' % (self.maxWidth, self.width))
-        self.log.info('\tHeight (overall):  %d (at given zoom level: %d)' % (self.maxHeight, self.height))
-        self.log.info('\tTile size:         %d' % self.tileSize)
-        self.log.info('\tWidth (in tiles):  %d (at given level: %d)' % (self.maxxTiles, self.xTiles))
-        self.log.info('\tHeight (in tiles): %d (at given level: %d)' % (self.maxyTiles, self.yTiles))
-        self.log.info('\tTotal tiles:       %d (to be retrieved: %d)' % (self.maxxTiles * self.maxyTiles,
+        self.log.info('\tMax zoom level:    {:d} (working zoom level: {:d})'.format(self.maxZoom - 1, self.zoomLevel))
+        self.log.info('\tWidth (overall):   {:d} (at given zoom level: {:d})'.format(self.maxWidth, self.width))
+        self.log.info('\tHeight (overall):  {:d} (at given zoom level: {:d})'.format(self.maxHeight, self.height))
+        self.log.info('\tTile size:         {:d}'.format(self.tileSize))
+        self.log.info('\tWidth (in tiles):  {:d} (at given level: {:d})'.format(self.maxxTiles, self.xTiles))
+        self.log.info('\tHeight (in tiles): {:d} (at given level: {:d})'.format(self.maxyTiles, self.yTiles))
+        self.log.info('\tTotal tiles:       {:d} (to be retrieved: {:d})'.format(self.maxxTiles * self.maxyTiles,
                                                                          self.xTiles * self.yTiles))
 
     def getImageTileURL(self, col, row):
@@ -545,12 +564,8 @@ class UntilerDezoomify(ImageUntiler):
         """
         tileIndex = self.getTileIndex(self.zoomLevel, col, row)
         tileGroup = tileIndex // self.tileSize
-        url = urlConcat(self.imageDir, 'TileGroup{}'.format(tileGroup),
-                '{}-{}-{}.{}'.format(self.zoomLevel, col, row, self.ext))
+        url = self.imageDir + 'TileGroup{}/{}-{}-{}.{}'.format(tileGroup, self.zoomLevel, col, row, self.ext)
         return url
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        None
+    main()

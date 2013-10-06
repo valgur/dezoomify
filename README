@@ -5,16 +5,12 @@ used by some websites to display large images in a convenient manner.
 
 Dezoomify is the work of:
     * inductiveload <inductiveload@gmail.com>
-    * Martin Valgur <quibik@gmail.com> 
+    * Martin Valgur <martin@valgur.ee>
     
 ==Installing==
 
 Dezoomify should not require any installation. Simply run
     python3 dezoomify.py <parameters>
-    
-The IJG JPEG components are distributed with this program as Windows and
-Linux binaries. If you wish to compile yourself, follow the instructions
-that come with that code in the jpeg-8c_patch subdirectory.
     
 ==Contact and support==
 
@@ -23,6 +19,7 @@ project page:
     https://sourceforge.net/projects/dezoomify/
     
 Support is provided through support tickets and a wiki system there.
+Please file any bugs and issues you come across at the issue tracker.
 
 ==License==
 
@@ -49,8 +46,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-===Licence of IJG components===
+==Acknowledgements==
 
-Dezoomify uses (and distributes the code and licence for) code by the 
-Independent JPEG Group, which is distributed under its own licence, 
-which can be found in the jpeg-8c_patch subdirectory.
+Dezoomify includes a few external components.
+jpegtran:
+	Copyright (c) 1995-2012, Thomas G. Lane, Guido Vollbeding.
+	Part of the Independent JPEG Group's software.
+progressbar:
+	Copyright (c) 2005 Nilton Volpato.
