@@ -495,7 +495,7 @@ class UntilerDezoomify(ImageUntiler):
         content = None
         try:
             with openUrl(xmlUrl) as handle:
-                content = handle.read()
+                content = handle.read().decode(errors='ignore')
         except Exception:
             self.log.error(
                 "Could not open ImageProperties.xml ({}).\n"
@@ -503,35 +503,16 @@ class UntilerDezoomify(ImageUntiler):
                 .format(sys.exc_info()[1], xmlUrl)
             )
             sys.exit()
-        # get the file's contents
-        content = content.decode(errors='ignore')
+
         # example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
-
-        m = re.search('WIDTH="(\d+)"', content)
-        if m:
-            self.maxWidth = int(m.group(1))
-        else:
-            self.log.error("Width not found in ImageProperties.xml")
-            sys.exit()
-
-        m = re.search('HEIGHT="(\d+)"', content)
-        if m:
-            self.maxHeight = int(m.group(1))
-        else:
-            self.log.error("Height not found in ImageProperties.xml")
-            sys.exit()
-
-        m = re.search('TILESIZE="(\d+)"', content)
-        if m:
-            self.tileSize = int(m.group(1))
-        else:
-            self.log.error("Tile size not found in ImageProperties.xml")
-            sys.exit()
+        properties = dict(re.findall(r"\b(\w+)\s*=\s*[\"']([^\"']*)[\"']", content))
+        self.maxWidth = int(properties["WIDTH"])
+        self.maxHeight = int(properties["HEIGHT"])
+        self.tileSize = int(properties["TILESIZE"])
 
         # PROCESS PROPERTIES TO GET ADDITIONAL DERIVABLE PROPERTIES
 
         self.getZoomLevels()  # get one-indexed maximum zoom level
-
         self.maxZoom = len(self.levels)
 
         # GET THE REQUESTED ZOOMLEVEL
