@@ -40,7 +40,6 @@ except ImportError:
     pass
 
 def main():
-
     parser = argparse.ArgumentParser()  # usage='Usage: %(prog)s <source> <output file> [options]'
     parser.add_argument('url', action='store',
                         help='the URL of a page containing a Zoomify object '
@@ -73,7 +72,6 @@ def main():
                         help='how many downloads will be made in parallel (default: 16)')
     parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
                         help='which image tiler protocol to use (options: zoomify. Default: zoomify)')
-
     args = parser.parse_args()
     UntilerDezoomify(args)
 
@@ -99,7 +97,6 @@ def openUrl(url):
         'User-Agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64; rv:24.0) Gecko/20100101 Firefox/24.0',
         'Referer': 'http://google.com'
     }
-
     # create a request object for the URL
     request = urllib.request.Request(url, headers=req_headers)
     # create an opener object
@@ -116,6 +113,83 @@ def downloadUrl(url, destination):
 
 
 class ImageUntiler():
+    def __init__(self, args):
+        self.verbose = int(args.verbose)
+        self.ext = 'jpg'
+        self.store = args.store
+        self.out = args.out
+        self.jpegtran = args.jpegtran
+        self.nodownload = args.nodownload
+        self.nthreads = int(args.nthreads)
+
+        if self.nodownload:
+            self.store = True
+
+        # Set up logging.
+        log_level = logging.WARNING  # default
+        if args.verbose == 1:
+            log_level = logging.INFO
+        elif args.verbose >= 2:
+            log_level = logging.DEBUG
+
+        logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
+        self.log = logging.getLogger(__name__)
+        
+
+        if self.jpegtran is None:  # we need to locate jpegtran
+            mod_dir = os.path.dirname(__file__)  # location of this script
+            if platform.system() == 'Windows':
+                jpegtran = os.path.join(mod_dir, 'jpegtran.exe')
+            else:
+                jpegtran = os.path.join(mod_dir, 'jpegtran')
+
+            if os.path.exists(jpegtran):
+                self.jpegtran = jpegtran
+            else:
+                self.log.error("No jpegtran excecutable found at the script's directory. "
+                               "Use -j option to set its location.")
+                exit()
+
+        if not os.path.exists(self.jpegtran):
+            self.log.error("jpegtran excecutable not found. "
+                           "Use -j option to set its location.")
+            exit()
+        elif not os.access(self.jpegtran, os.X_OK):
+            self.log.error("{} does not have execute permission."
+                           .format(self.jpegtran))
+            exit()
+
+        self.tileDir = None
+        self.getUrlList(args.url, args.list)
+        for i, imageUrl in enumerate(self.imageUrls):
+            destination = self.outNames[i]
+            if len(self.imageUrls) > 1:
+                print("Processing image {} ({}/{})...".format(destination, i+1, len(self.imageUrls)))
+
+            if not args.base:
+                # locate the base directory of the zoomify tile images
+                self.baseDir = self.getBaseDirectory(imageUrl)
+            else:
+                self.baseDir = imageUrl
+                if self.baseDir.endswith('/ImageProperties.xml'):
+                    self.baseDir = urllib.parse.urljoin(self.baseDir, '.')
+                self.baseDir = self.baseDir.rstrip('/') + '/'
+
+            try:
+                # inspect the ImageProperties.xml file to get properties, and derive the rest
+                self.getProperties(self.baseDir, args.zoomLevel)
+    
+                # create the directory where the tiles are stored
+                self.setupDirectory(destination)
+    
+                # download and join tiles to create the dezoomified file
+                self.getImage(destination)
+            finally: 
+                if not self.store and self.tileDir:
+                    shutil.rmtree(self.tileDir)
+                    self.log.info("Erased the temporary directory and its contents")
+
+            self.log.info("Dezoomifed image created and saved to " + destination)
 
     def getImage(self, outputDestination):
         """
@@ -250,7 +324,7 @@ class ImageUntiler():
             # Kill the jpegtran subprocess.
             if subproc and subproc.poll() is None:
                 subproc.kill()
-            sleep(0.5) # Wait for the file handles to be released.
+            sleep(1) # Wait for the file handles to be released.
             raise
         finally:
             # Delete the temporary images.
@@ -261,7 +335,6 @@ class ImageUntiler():
         """
         Return a list of URLs to process and their respective output file names.
         """
-
         if not use_list:  # if we are dealing with a single object
             self.imageUrls = [url]
             self.outNames = [self.out]
@@ -304,83 +377,8 @@ class ImageUntiler():
             self.tileDir = tempfile.mkdtemp(prefix='dezoomify_')
             self.log.info("Created temporary image storage directory: {}".format(self.tileDir))
 
-    def __init__(self, args):
-        
-        self.verbose = int(args.verbose)
-        self.ext = 'jpg'
-        self.store = args.store
-        self.out = args.out
-        self.jpegtran = args.jpegtran
-        self.nodownload = args.nodownload
-        self.nthreads = int(args.nthreads)
-
-        if self.nodownload:
-            self.store = True
-
-        # Set up logging.
-        log_level = logging.WARNING  # default
-        if args.verbose == 1:
-            log_level = logging.INFO
-        elif args.verbose >= 2:
-            log_level = logging.DEBUG
-
-        logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
-        self.log = logging.getLogger(__name__)
-
-        if self.jpegtran is None:  # we need to locate jpegtran
-            mod_dir = os.path.dirname(__file__)  # location of this script
-            if platform.system() == 'Windows':
-                jpegtran = os.path.join(mod_dir, 'jpegtran.exe')
-            else:
-                jpegtran = os.path.join(mod_dir, 'jpegtran')
-
-            if os.path.exists(jpegtran):
-                self.jpegtran = jpegtran
-            else:
-                self.log.error("No jpegtran excecutable found at the script's directory. "
-                               "Use -j option to set its location.")
-                exit()
-
-        if not os.path.exists(self.jpegtran):
-            self.log.error("jpegtran excecutable not found. "
-                           "Use -j option to set its location.")
-            exit()
-        elif not os.access(self.jpegtran, os.X_OK):
-            self.log.error("{} does not have execute permission."
-                           .format(self.jpegtran))
-            exit()
-
-        self.getUrlList(args.url, args.list)
-        
-        for i, imageUrl in enumerate(self.imageUrls):
-            destination = self.outNames[i]
-            if len(self.imageUrls) > 1:
-                print("Processing image {} ({}/{})...".format(destination, i+1, len(self.imageUrls)))
-
-            if not args.base:
-                # locate the base directory of the zoomify tile images
-                self.imageDir = self.getImageDirectory(imageUrl)
-            else:
-                self.imageDir = imageDir
-
-            try:
-                # inspect the ImageProperties.xml file to get properties, and derive the rest
-                self.getProperties(self.imageDir, args.zoomLevel)
-    
-                # create the directory where the tiles are stored
-                self.setupDirectory(destination)
-    
-                # download and join tiles to create the dezoomified file
-                self.getImage(destination)
-            finally: 
-                if not self.store:
-                    shutil.rmtree(self.tileDir)
-                    self.log.info("Erased the temporary directory and its contents")
-
-            self.log.info("Dezoomifed image created and saved to " + destination)
-
+            
 class UntilerDezoomify(ImageUntiler):
-
     def getTileIndex(self, level, x, y):
         """
         Get the zoomify index of a tile in a given level, at given co-ordinates
@@ -421,7 +419,7 @@ class UntilerDezoomify(ImageUntiler):
         self.levels.reverse()
         self.log.debug("self.levels = {}".format(self.levels))
 
-    def getImageDirectory(self, url):
+    def getBaseDirectory(self, url):
         """
         Gets the Zoomify image base directory for the image tiles. This function
         is called if the user does NOT supply a base directory explicitly. It works
@@ -433,11 +431,13 @@ class UntilerDezoomify(ImageUntiler):
         """
 
         try:
-            content = openUrl(url).read().decode(errors='ignore')
+            with openUrl(url) as handle:
+                content = handle.read().decode(errors='ignore')
         except Exception:
             self.log.error(
-                "Specified directory not found. Check the URL.\n"
-                "Exception: {} ".format(sys.exc_info()[1])
+                "Specified directory not found ({}).\n"
+                "Check the URL: {}"
+                .format(sys.exc_info()[1], url)
             )
             sys.exit()
 
@@ -470,18 +470,18 @@ class UntilerDezoomify(ImageUntiler):
         self.log.info("Found zoomifyImagePath: {}".format(imagePath))
         
         imagePath = urllib.parse.unquote(imagePath)
-        imageDir = urllib.parse.urljoin(url, imagePath)
-        imageDir = imageDir.rstrip('/') + '/'
-        return imageDir
+        baseDir = urllib.parse.urljoin(url, imagePath)
+        baseDir = baseDir.rstrip('/') + '/'
+        return baseDir
 
-    def getProperties(self, imageDir, zoomLevel):
+    def getProperties(self, baseDir, zoomLevel):
         """
         Retrieve the XML properties file and extract the needed information.
 
         Sets the relevant variables for the grabbing phase.
 
         Keyword arguments
-        imageDir -- the Zoomify base directory
+        baseDir -- the Zoomify base directory
         zoomLevel -- the level which we want to get
         """
 
@@ -489,10 +489,20 @@ class UntilerDezoomify(ImageUntiler):
         # NEEDED TO RECONSTRUCT (WIDTH, HEIGHT AND TILESIZE)
 
         # this file contains information about the image tiles
-        xmlUrl = urllib.parse.urljoin(imageDir, 'ImageProperties.xml')
+        xmlUrl = urllib.parse.urljoin(baseDir, 'ImageProperties.xml')
 
         self.log.info("xmlUrl=" + xmlUrl)
-        content = openUrl(xmlUrl).read()
+        content = None
+        try:
+            with openUrl(xmlUrl) as handle:
+                content = handle.read()
+        except Exception:
+            self.log.error(
+                "Could not open ImageProperties.xml ({}).\n"
+                "URL: {}"
+                .format(sys.exc_info()[1], xmlUrl)
+            )
+            sys.exit()
         # get the file's contents
         content = content.decode(errors='ignore')
         # example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
@@ -564,7 +574,7 @@ class UntilerDezoomify(ImageUntiler):
         """
         tileIndex = self.getTileIndex(self.zoomLevel, col, row)
         tileGroup = tileIndex // self.tileSize
-        url = self.imageDir + 'TileGroup{}/{}-{}-{}.{}'.format(tileGroup, self.zoomLevel, col, row, self.ext)
+        url = self.baseDir + 'TileGroup{}/{}-{}-{}.{}'.format(tileGroup, self.zoomLevel, col, row, self.ext)
         return url
 
 if __name__ == "__main__":
