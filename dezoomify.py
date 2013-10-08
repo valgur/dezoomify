@@ -503,7 +503,7 @@ class UntilerDezoomify(ImageUntiler):
                 .format(sys.exc_info()[1], xmlUrl)
             )
             sys.exit()
-
+            
         # example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
         properties = dict(re.findall(r"\b(\w+)\s*=\s*[\"']([^\"']*)[\"']", content))
         self.maxWidth = int(properties["WIDTH"])
