@@ -30,7 +30,6 @@ import urllib.parse
 import platform
 import itertools
 from multiprocessing.pool import ThreadPool
-from time import sleep
 
 # Progressbar module is optional but recommended.
 progressbar = None
@@ -150,6 +149,7 @@ class ImageUntiler():
                                "Use -j option to set its location.")
                 exit()
 
+        # Check that jpegtran exists and has the lossless drop feature.
         if not os.path.exists(self.jpegtran):
             self.log.error("jpegtran excecutable not found. "
                            "Use -j option to set its location.")
@@ -157,6 +157,14 @@ class ImageUntiler():
         elif not os.access(self.jpegtran, os.X_OK):
             self.log.error("{} does not have execute permission."
                            .format(self.jpegtran))
+            exit()
+        subproc = subprocess.Popen([self.jpegtran], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        jpegtran_help_info = str(subproc.communicate()[1])
+        if '-drop' not in jpegtran_help_info:
+            self.log.error("{} does not have the '-drop' feature. "
+                "Either use the jpegtran supplied with Dezoomify or get it from "
+                "http://jpegclub.org/jpegtran/ section \"3. Lossless crop 'n' drop (cut & paste)\" to fix the problem."
+                .format(self.jpegtran))
             exit()
 
         self.tileDir = None
@@ -324,7 +332,6 @@ class ImageUntiler():
             # Kill the jpegtran subprocess.
             if subproc and subproc.poll() is None:
                 subproc.kill()
-            sleep(1) # Wait for the file handles to be released.
             raise
         finally:
             # Delete the temporary images.
