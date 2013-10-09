@@ -78,7 +78,7 @@ def main():
 def openUrl(url):
     """
     Similar to urllib.request.urlopen,
-    except some additional preparation is done on the URL and 
+    except some additional preparation is done on the URL and
     the user-agent and referrer are spoofed.
 
     Keyword arguments:
@@ -133,7 +133,7 @@ class ImageUntiler():
 
         logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
         self.log = logging.getLogger(__name__)
-        
+
 
         if self.jpegtran is None:  # we need to locate jpegtran
             mod_dir = os.path.dirname(__file__)  # location of this script
@@ -186,13 +186,13 @@ class ImageUntiler():
             try:
                 # inspect the ImageProperties.xml file to get properties, and derive the rest
                 self.getProperties(self.baseDir, args.zoomLevel)
-    
+
                 # create the directory where the tiles are stored
                 self.setupDirectory(destination)
-    
+
                 # download and join tiles to create the dezoomified file
                 self.getImage(destination)
-            finally: 
+            finally:
                 if not self.store and self.tileDir:
                     shutil.rmtree(self.tileDir)
                     self.log.info("Erased the temporary directory and its contents")
@@ -207,10 +207,10 @@ class ImageUntiler():
         numTiles = self.xTiles * self.yTiles
         numDownloaded = 0
         numJoined = 0
-        
+
         # Progressbars for downloading and joining.
         if progressbar:
-            downloadProgressbar = progressbar.ProgressBar( 
+            downloadProgressbar = progressbar.ProgressBar(
                 widgets = ['Downloading tiles: ',
                            progressbar.Counter(), '/', str(numTiles), ' ',
                            progressbar.Bar('>', left='[', right=']'), ' ',
@@ -218,18 +218,18 @@ class ImageUntiler():
                 maxval = numTiles
             )
             downloadProgressbar.start()
-        
-            joiningProgressbar = progressbar.ProgressBar( 
+
+            joiningProgressbar = progressbar.ProgressBar(
                 widgets = ['Joining tiles: ',
                            progressbar.Counter(), '/', str(numTiles), ' ',
                            progressbar.Bar('>', left='[', right=']'), ' ',
                            progressbar.ETA()],
                 maxval = numTiles
             )
-        
+
         def localTileName(col, row):
             return os.path.join(self.tileDir, "{}_{}.{}".format(col, row, self.ext))
-        
+
         def download(tilePosition):
             col, row = tilePosition
             url = self.getImageTileURL(col, row)
@@ -271,10 +271,10 @@ class ImageUntiler():
             subproc = None # Popen class of the most recently called subprocess.
             for i, (col, row) in enumerate(downloadedIterator):
                 if col is None: continue # Tile failed to download.
-                
+
                 if not progressbar:
                     self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
-                
+
                 # As the very first step create an (almost) empty image with the target dimensions.
                 if i == 0:
                     subproc = subprocess.Popen([self.jpegtran,
@@ -284,7 +284,7 @@ class ImageUntiler():
                         localTileName(col, row)
                     ])
                     subproc.wait()
-                
+
                 subproc = subprocess.Popen([self.jpegtran,
                     '-copy', 'all',
                     '-drop', '+{:d}+{:d}'.format(col * self.tileSize, row * self.tileSize), localTileName(col, row),
@@ -294,7 +294,7 @@ class ImageUntiler():
                 subproc.wait()
 
                 activeTmp = (activeTmp + 1) % 2  # toggle between the two temp images
-                
+
                 numJoined += 1
                 if not self.nodownload:
                     numDownloaded = downloadedIterator._index
@@ -315,7 +315,7 @@ class ImageUntiler():
                 tmpimgs[activeTmp]
             ])
             subproc.wait()
-            
+
             numMissing = numTiles - numJoined
             if numMissing > 0:
                 self.log.warning(
@@ -384,7 +384,7 @@ class ImageUntiler():
             self.tileDir = tempfile.mkdtemp(prefix='dezoomify_')
             self.log.info("Created temporary image storage directory: {}".format(self.tileDir))
 
-            
+
 class UntilerDezoomify(ImageUntiler):
     def getTileIndex(self, level, x, y):
         """
@@ -415,10 +415,10 @@ class UntilerDezoomify(ImageUntiler):
             widthInTiles = int(ceil(locWidth / float(self.tileSize)))
             heightInTiles = int(ceil(locHeight / float(self.tileSize)))
             self.levels.append((widthInTiles, heightInTiles))
-            
+
             if widthInTiles == 1 and heightInTiles == 1:
                 break
-            
+
             locWidth = int(locWidth / 2.)
             locHeight = int(locHeight / 2.)
 
@@ -449,33 +449,25 @@ class UntilerDezoomify(ImageUntiler):
             sys.exit()
 
         imagePath = None
-        m = re.search('zoomifyImagePath=([^\'"&]*)[\'"&]', content)
-        if m:
-            imagePath = m.group(1)
-
-        if not imagePath:
-            m = re.search('ZoomifyCache/[^\'"&.]+\\.\\d+x\\d+', content)
+        imagePathRegexes = [
+            ('zoomifyImagePath=([^\'"&]*)[\'"&]', 1),
+            ('ZoomifyCache/[^\'"&.]+\\.\\d+x\\d+', 0),
+            # For HTML5 Zoomify.
+            ('(["\'])([^"\']+)/TileGroup0[^"\']*\\1', 2),
+            # Another JavaScript/HTML5 Zoomify version (v1.8).
+            ('showImage\\([^,]+, *(["\'])([^"\']+)\\1', 2)]
+        for rx, group in imagePathRegexes:
+            m = re.search(rx, content)
             if m:
-                imagePath = m.group(0)
-
-        # For HTML5 Zoomify.
-        if not imagePath:
-            m = re.search('(["\'])([^"]+)/TileGroup0[^"]*\\1', content)
-            if m:
-                imagePath = m.group(2)
-
-        # Another JavaScript/HTML5 Zoomify version (v1.8).
-        if not imagePath:
-            m = re.search('showImage\([^,]+, (["\'])([^"\']+)\\1', content)
-            if m:
-                imagePath = m.group(2)
+                imagePath = m.group(group)
+                break
 
         if not imagePath:
             self.log.error("Source directory not found. Ensure the given URL contains a Zoomify object.")
             sys.exit()
-            
+
         self.log.info("Found zoomifyImagePath: {}".format(imagePath))
-        
+
         imagePath = urllib.parse.unquote(imagePath)
         baseDir = urllib.parse.urljoin(url, imagePath)
         baseDir = baseDir.rstrip('/') + '/'
@@ -510,7 +502,7 @@ class UntilerDezoomify(ImageUntiler):
                 .format(sys.exc_info()[1], xmlUrl)
             )
             sys.exit()
-            
+
         # example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
         properties = dict(re.findall(r"\b(\w+)\s*=\s*[\"']([^\"']*)[\"']", content))
         self.maxWidth = int(properties["WIDTH"])
