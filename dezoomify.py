@@ -130,11 +130,10 @@ class ImageUntiler():
             log_level = logging.INFO
         elif args.verbose >= 2:
             log_level = logging.DEBUG
-
         logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
         self.log = logging.getLogger(__name__)
 
-
+        # Set up jpegtran.
         if self.jpegtran is None:  # we need to locate jpegtran
             mod_dir = os.path.dirname(__file__)  # location of this script
             if platform.system() == 'Windows':
@@ -188,7 +187,7 @@ class ImageUntiler():
                 self.getProperties(self.baseDir, args.zoomLevel)
 
                 # create the directory where the tiles are stored
-                self.setupDirectory(destination)
+                self.setupTileDirectory(self.store, destination)
 
                 # download and join tiles to create the dezoomified file
                 self.getImage(destination)
@@ -370,11 +369,17 @@ class ImageUntiler():
 
                 self.imageUrls.append(line[0])
 
-    def setupDirectory(self, destination):
-        # if we will save the tiles, set up the directory to save in
-        # create a temporary directory otherwise
-        if self.store:
-            root, ext = os.path.splitext(destination)
+    def setupTileDirectory(self, inLocalDir, outputFileName=None):
+        """
+        Create the directory in which tile downloading & joining takes place.
+
+        inLocalDir -- whether the directory should be placed in the working directory,
+            will be created in the system's temp directory otherwise
+        outputFileName -- the path of the final dezoomified image,
+            used to derive the local directory's location
+        """
+        if inLocalDir:
+            root, ext = os.path.splitext(outputFileName)
 
             if not os.path.exists(root):
                 self.log.info("Creating image storage directory: {}".format(root))
@@ -386,46 +391,6 @@ class ImageUntiler():
 
 
 class UntilerDezoomify(ImageUntiler):
-    def getTileIndex(self, level, x, y):
-        """
-        Get the zoomify index of a tile in a given level, at given co-ordinates
-        This is needed to get the tilegroup.
-
-        Keyword arguments:
-        level -- the zoomlevel of the tile
-        x,y -- the co-ordinates of the tile in that level
-
-        Returns -- the zoomify index
-        """
-
-        index = x + y * int(ceil(floor(self.width / pow(2, self.maxZoom - level - 1)) / self.tileSize))
-
-        for i in range(1, level + 1):
-            index += int(ceil(floor(self.width / pow(2, self.maxZoom - i)) / self.tileSize)) * \
-                int(ceil(floor(self.height / pow(2, self.maxZoom - i)) / self.tileSize))
-
-        return index
-
-    def getZoomLevels(self):
-        """Construct a list of all zoomlevels with sizes in tiles"""
-        locWidth = self.maxWidth
-        locHeight = self.maxHeight
-        self.levels = []
-        while True:
-            widthInTiles = int(ceil(locWidth / float(self.tileSize)))
-            heightInTiles = int(ceil(locHeight / float(self.tileSize)))
-            self.levels.append((widthInTiles, heightInTiles))
-
-            if widthInTiles == 1 and heightInTiles == 1:
-                break
-
-            locWidth = int(locWidth / 2.)
-            locHeight = int(locHeight / 2.)
-
-        # make the 0th level the smallest zoom, and higher levels, higher zoom
-        self.levels.reverse()
-        self.log.debug("self.levels = {}".format(self.levels))
-
     def getBaseDirectory(self, url):
         """
         Gets the Zoomify image base directory for the image tiles. This function
@@ -463,7 +428,7 @@ class UntilerDezoomify(ImageUntiler):
                 break
 
         if not imagePath:
-            self.log.error("Zoomify source directory not found. "
+            self.log.error("Zoomify base directory not found. "
             "Ensure the given URL contains a Zoomify object.\n"
             "If that does not work, see \"Troubleshooting\" (http://sourceforge.net/p/dezoomify/wiki/Troubleshooting/) for additional help.")
             sys.exit()
@@ -500,8 +465,7 @@ class UntilerDezoomify(ImageUntiler):
         except Exception:
             self.log.error(
                 "Could not open ImageProperties.xml ({}).\n"
-                "URL: {}"
-                .format(sys.exc_info()[1], xmlUrl)
+                "URL: {}".format(sys.exc_info()[1], xmlUrl)
             )
             sys.exit()
 
@@ -531,15 +495,12 @@ class UntilerDezoomify(ImageUntiler):
                 )
 
         # GET THE SIZE AT THE RQUESTED ZOOM LEVEL
-        self.width = int(self.maxWidth / 2 ** (self.maxZoom - self.zoomLevel - 1))
+        self.width  = int(self.maxWidth  / 2 ** (self.maxZoom - self.zoomLevel - 1))
         self.height = int(self.maxHeight / 2 ** (self.maxZoom - self.zoomLevel - 1))
 
         # GET THE NUMBER OF TILES AT THE REQUESTED ZOOM LEVEL
-        self.maxxTiles = self.levels[-1][0]
-        self.maxyTiles = self.levels[-1][1]
-
-        self.xTiles = self.levels[self.zoomLevel][0]
-        self.yTiles = self.levels[self.zoomLevel][1]
+        self.maxxTiles, self.maxyTiles = self.levels[-1]
+        self.xTiles,    self.yTiles    = self.levels[self.zoomLevel]
 
         self.log.info('\tMax zoom level:    {:d} (working zoom level: {:d})'.format(self.maxZoom - 1, self.zoomLevel))
         self.log.info('\tWidth (overall):   {:d} (at given zoom level: {:d})'.format(self.maxWidth, self.width))
@@ -549,6 +510,46 @@ class UntilerDezoomify(ImageUntiler):
         self.log.info('\tHeight (in tiles): {:d} (at given level: {:d})'.format(self.maxyTiles, self.yTiles))
         self.log.info('\tTotal tiles:       {:d} (to be retrieved: {:d})'.format(self.maxxTiles * self.maxyTiles,
                                                                          self.xTiles * self.yTiles))
+
+    def getZoomLevels(self):
+        """Construct a list of all zoomlevels with sizes in tiles"""
+        locWidth = self.maxWidth
+        locHeight = self.maxHeight
+        self.levels = []
+        while True:
+            widthInTiles = int(ceil(locWidth / float(self.tileSize)))
+            heightInTiles = int(ceil(locHeight / float(self.tileSize)))
+            self.levels.append((widthInTiles, heightInTiles))
+
+            if widthInTiles == 1 and heightInTiles == 1:
+                break
+
+            locWidth = int(locWidth / 2.)
+            locHeight = int(locHeight / 2.)
+
+        # make the 0th level the smallest zoom, and higher levels, higher zoom
+        self.levels.reverse()
+        self.log.debug("self.levels = {}".format(self.levels))
+        
+    def getTileIndex(self, level, x, y):
+        """
+        Get the zoomify index of a tile in a given level, at given co-ordinates
+        This is needed to get the tilegroup.
+
+        Keyword arguments:
+        level -- the zoomlevel of the tile
+        x,y -- the co-ordinates of the tile in that level
+
+        Returns -- the zoomify index
+        """
+
+        index = x + y * int(ceil(floor(self.width / pow(2, self.maxZoom - level - 1)) / self.tileSize))
+
+        for i in range(1, level + 1):
+            index += int(ceil(floor(self.width / pow(2, self.maxZoom - i)) / self.tileSize)) * \
+                int(ceil(floor(self.height / pow(2, self.maxZoom - i)) / self.tileSize))
+
+        return index
 
     def getImageTileURL(self, col, row):
         """
