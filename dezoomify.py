@@ -463,7 +463,9 @@ class UntilerDezoomify(ImageUntiler):
                 break
 
         if not imagePath:
-            self.log.error("Source directory not found. Ensure the given URL contains a Zoomify object.")
+            self.log.error("Zoomify source directory not found. "
+            "Ensure the given URL contains a Zoomify object.\n"
+            "If that does not work, see \"Troubleshooting\" (http://sourceforge.net/p/dezoomify/wiki/Troubleshooting/) for additional help.")
             sys.exit()
 
         self.log.info("Found zoomifyImagePath: {}".format(imagePath))

@@ -6,18 +6,23 @@ used by some websites to display large images in a convenient manner.
 Dezoomify is the work of:
     * inductiveload <inductiveload@gmail.com>
     * Martin Valgur <martin@valgur.ee>
-    
+
 ==Installing==
 
 Dezoomify should not require any installation. Simply run
-    python3 dezoomify.py <parameters>
-    
+	chmod +x dezoomify.py
+    ./dezoomify.py <Zoomify page URL> <output file name>
+on Linux or
+	py dezoomify.py <Zoomify page URL> <output file name>
+on Windows. If the above does not work for Windows, try reinstalling
+Python 3 with the "Add python.exe to search path" option.
+
 ==Contact and support==
 
 Contact relating to the software should be made at the Sourceforge
 project page:
-    https://sourceforge.net/projects/dezoomify/
-    
+    http://sourceforge.net/projects/dezoomify/
+
 Support is provided through support tickets and a wiki system there.
 Please file any bugs and issues you come across at the issue tracker.
 
