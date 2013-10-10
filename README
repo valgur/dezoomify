@@ -10,10 +10,10 @@ Dezoomify is the work of:
 ==Installing==
 
 Dezoomify should not require any installation. Simply run
-	chmod +x dezoomify.py
+    chmod +x dezoomify.py
     ./dezoomify.py <Zoomify page URL> <output file name>
 on Linux or
-	py dezoomify.py <Zoomify page URL> <output file name>
+    py dezoomify.py <Zoomify page URL> <output file name>
 on Windows. If the above does not work for Windows, try reinstalling
 Python 3 with the "Add python.exe to search path" option.
 
