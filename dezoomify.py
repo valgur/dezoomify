@@ -21,15 +21,14 @@ import argparse
 import logging
 import os
 import re
-import subprocess
 import tempfile
 import shutil
 import urllib.error
 import urllib.request
 import urllib.parse
-import platform
 import itertools
 from multiprocessing.pool import ThreadPool
+from PIL import Image  # this is Pillow, not PIL
 
 # Progressbar module is optional but recommended.
 progressbar = None
@@ -61,9 +60,6 @@ def main():
     parser.add_argument('-s', dest='store', action='store_true', default=False,
                         help='save all tiles in the local folder instead of the '
                         'system\'s temporary directory')
-    parser.add_argument('-j', dest='jpegtran', action='store',
-                        help='location of jpegtran executable (assumed to be in the '
-                        'same directory as this script by default)')
     parser.add_argument('-x', dest='no_download', action='store_true', default=False,
                         help='create the image from previously downloaded files stored '
                         'with -s (can be useful when an error occurred during tile joining)')
@@ -91,10 +87,9 @@ def open_url(url):
     qs = urllib.parse.quote_plus(qs, ':&=')
     url = urllib.parse.urlunsplit((scheme, netloc, path, qs, anchor))
 
-    # spoof the user-agent and referrer, in case that matters.
+    # Spoof the user-agent, in case that matters.
     req_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64; rv:24.0) Gecko/20100101 Firefox/24.0',
-        'Referer': 'http://google.com'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64; rv:24.0) Gecko/20100101 Firefox/24.0'
     }
     # create a request object for the URL
     request = urllib.request.Request(url, headers=req_headers)
@@ -117,7 +112,6 @@ class ImageUntiler():
         self.ext = 'jpg'
         self.store = args.store
         self.out = args.out
-        self.jpegtran = args.jpegtran
         self.no_download = args.no_download
         self.nthreads = int(args.nthreads)
 
@@ -133,45 +127,12 @@ class ImageUntiler():
         logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
         self.log = logging.getLogger(__name__)
 
-        # Set up jpegtran.
-        if self.jpegtran is None:  # we need to locate jpegtran
-            mod_dir = os.path.dirname(__file__)  # location of this script
-            if platform.system() == 'Windows':
-                jpegtran = os.path.join(mod_dir, 'jpegtran.exe')
-            else:
-                jpegtran = os.path.join(mod_dir, 'jpegtran')
-
-            if os.path.exists(jpegtran):
-                self.jpegtran = jpegtran
-            else:
-                self.log.error("No jpegtran excecutable found at the script's directory. "
-                               "Use -j option to set its location.")
-                exit()
-
-        # Check that jpegtran exists and has the lossless drop feature.
-        if not os.path.exists(self.jpegtran):
-            self.log.error("jpegtran excecutable not found. "
-                           "Use -j option to set its location.")
-            exit()
-        elif not os.access(self.jpegtran, os.X_OK):
-            self.log.error("{} does not have execute permission."
-                           .format(self.jpegtran))
-            exit()
-        subproc = subprocess.Popen([self.jpegtran], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        jpegtran_help_info = str(subproc.communicate()[1])
-        if '-drop' not in jpegtran_help_info:
-            self.log.error("{} does not have the '-drop' feature. "
-                "Either use the jpegtran supplied with Dezoomify or get it from "
-                "http://jpegclub.org/jpegtran/ section \"3. Lossless crop 'n' drop (cut & paste)\" to fix the problem."
-                .format(self.jpegtran))
-            exit()
-
         self.tile_dir = None
         self.get_url_list(args.url, args.list)
         for i, image_url in enumerate(self.image_urls):
             destination = self.out_names[i]
             if len(self.image_urls) > 1:
-                print("Processing image {} ({}/{})...".format(destination, i+1, len(self.image_urls)))
+                print("Processing image {} ({}/{})...".format(destination, i + 1, len(self.image_urls)))
 
             if not args.base:
                 # locate the base directory of the zoomify tile images
@@ -186,19 +147,33 @@ class ImageUntiler():
                 # inspect the ImageProperties.xml file to get properties, and derive the rest
                 self.get_properties(self.base_dir, args.zoom_level)
 
-                # create the directory where the tiles are stored
-                self.setup_tile_directory(self.store, destination)
+                # create the directory where the tiles will be stored
+                self.set_up_tile_directory(self.store, destination)
+
+                self.construct_blank_image()
 
                 # download and join tiles to create the dezoomified file
-                self.untile_image(destination)
+                self.untile_image()
+
+                self.save_image(destination)
+                self.log.info("Dezoomifed image created and saved to " + destination)
             finally:
-                if not self.store and self.tile_dir:
+                if self.tile_dir and not self.store:
                     shutil.rmtree(self.tile_dir)
                     self.log.info("Erased the temporary directory and its contents")
 
-            self.log.info("Dezoomifed image created and saved to " + destination)
+    def construct_blank_image(self):
+        try:
+            self.image = Image.new('RGB', (self.width, self.height), "#808080")
+        except MemoryError:
+            self.log.error("Image too large to fit into memory. Exiting")
+            raise
+        return
 
-    def untile_image(self, output_destination):
+    def get_local_tile_path(self, column, row):
+        return os.path.join(self.tile_dir, "{}_{}.{}".format(column, row, self.ext))
+
+    def untile_image(self):
         """
         Downloads image tiles and joins them.
         These processes are done in parallel.
@@ -210,29 +185,24 @@ class ImageUntiler():
         # Progressbars for downloading and joining.
         if progressbar:
             download_progressbar = progressbar.ProgressBar(
-                widgets = ['Downloading tiles: ',
+                widgets=['Downloading tiles: ',
                            progressbar.Counter(), '/', str(num_tiles), ' ',
                            progressbar.Bar('>', left='[', right=']'), ' ',
                            progressbar.ETA()],
-                maxval = num_tiles
-            )
+                maxval=num_tiles)
             download_progressbar.start()
 
             joining_progressbar = progressbar.ProgressBar(
-                widgets = ['Joining tiles: ',
+                widgets=['Joining tiles: ',
                            progressbar.Counter(), '/', str(num_tiles), ' ',
                            progressbar.Bar('>', left='[', right=']'), ' ',
                            progressbar.ETA()],
-                maxval = num_tiles
-            )
+                maxval=num_tiles)
 
-        def local_tile_path(col, row):
-            return os.path.join(self.tile_dir, "{}_{}.{}".format(col, row, self.ext))
-
-        def download(tile_position):
+        def download_tile(tile_position):
             col, row = tile_position
             url = self.get_tile_url(col, row)
-            destination = local_tile_path(col, row)
+            destination = self.get_local_tile_path(col, row)
             if not progressbar:
                 self.log.info("Downloading tile (row {:3}, col {:3})".format(row, col))
             try:
@@ -240,103 +210,66 @@ class ImageUntiler():
             except urllib.error.HTTPError as e:
                 self.log.warning(
                     "{}. Tile {} (row {}, col {}) does not exist on the server."
-                    .format(e, url, row, col)
-                )
-                return (None, None)
-            return tile_position
+                    .format(e, url, row, col))
+                return (None, None, None)
+            return (destination, col, row)
 
-        # Download tiles in self.nthreads parallel threads.
+        # Download tiles in self.nthreads number of parallel threads.
         tile_positions = itertools.product(range(self.x_tiles), range(self.y_tiles))
         if not self.no_download:
             pool = ThreadPool(processes=self.nthreads)
-            downloaded_iterator = pool.imap_unordered(download, tile_positions)
+            downloaded_iterator = pool.imap_unordered(download_tile, tile_positions)
         else:
-            downloaded_iterator = tile_positions
+            downloaded_iterator = ((self.get_local_tile_path(*pos), pos[0], pos[1]) for pos in tile_positions)
             num_downloaded = num_tiles
 
-        # Do tile joining in parallel with the downloading.
-        # Use two temporary files for the joining process.
-        tmpimgs = [None, None]
-        for i in range(2):
-            fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', dir=self.tile_dir, delete=False)
-            tmpimgs[i] = fhandle.name
-            fhandle.close()
-            self.log.debug("Created temporary image file: " + tmpimgs[i])
-
-        # The index of current temp image to be used for input, toggles between 0 and 1.
-        active_tmp = 0
-
         # Join tiles into a single image in parallel to them being downloaded.
-        try:
-            subproc = None # Popen class of the most recently called subprocess.
-            for i, (col, row) in enumerate(downloaded_iterator):
-                if col is None: continue # Tile failed to download.
+        for (tile_path, col, row) in downloaded_iterator:
+            if tile_path is None: continue  # Tile failed to download.
 
-                if not progressbar:
-                    self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
+            if not progressbar:
+                self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
 
-                # As the very first step create an (almost) empty image with the target dimensions.
-                if i == 0:
-                    subproc = subprocess.Popen([self.jpegtran,
-                        '-copy', 'all',
-                        '-crop', '{:d}x{:d}+0+0'.format(self.width, self.height),
-                        '-outfile', tmpimgs[active_tmp],
-                        local_tile_path(col, row)
-                    ])
-                    subproc.wait()
-
-                subproc = subprocess.Popen([self.jpegtran,
-                    '-copy', 'all',
-                    '-drop', '+{:d}+{:d}'.format(col * self.tile_size, row * self.tile_size), local_tile_path(col, row),
-                    '-outfile', tmpimgs[(active_tmp + 1) % 2],
-                    tmpimgs[active_tmp]
-                ])
-                subproc.wait()
-
-                active_tmp = (active_tmp + 1) % 2  # toggle between the two temp images
-
+            try:
+                tile = Image.open(tile_path)
+                self.image.paste(tile, (self.tile_size * col, self.tile_size * row))
                 num_joined += 1
-                if not self.no_download:
-                    num_downloaded = downloaded_iterator._index
-                if progressbar:
-                    if num_downloaded < num_tiles:
-                        download_progressbar.update(num_downloaded)
-                    elif not download_progressbar.finished:
-                        download_progressbar.finish()
-                        joining_progressbar.start()
-                    else:
-                        joining_progressbar.update(num_joined)
+            except Exception as e:  # failure to read the image tile
+                self.log.warning("Error loading tile at position ({}, {}): {}.".format(row, col, e))
 
-            # Make a final optimization pass and save the image to the output file.
-            subproc = subprocess.Popen([self.jpegtran,
-                '-copy', 'all',
-                '-optimize',
-                '-outfile', output_destination,
-                tmpimgs[active_tmp]
-            ])
-            subproc.wait()
-
-            num_missing = num_tiles - num_joined
-            if num_missing > 0:
-                self.log.warning(
-                    "Image '{3}' is missing {0} tile{1}. "
-                    "You might want to download the image at a different zoom level "
-                    "(currently {2}) to get the missing part{1}."
-                    .format(num_missing, '' if num_missing == 1 else 's', self.zoom_level,
-                            output_destination)
-                )
+            if not self.no_download:
+                num_downloaded = downloaded_iterator._index
             if progressbar:
-                joining_progressbar.finish()
+                if num_downloaded < num_tiles:
+                    download_progressbar.update(num_downloaded)
+                elif not download_progressbar.finished:
+                    download_progressbar.finish()
+                    joining_progressbar.start()
+                else:
+                    joining_progressbar.update(num_joined)
 
-        except KeyboardInterrupt:
-            # Kill the jpegtran subprocess.
-            if subproc and subproc.poll() is None:
-                subproc.kill()
-            raise
-        finally:
-            # Delete the temporary images.
-            os.unlink(tmpimgs[0])
-            os.unlink(tmpimgs[1])
+        num_missing = num_tiles - num_joined
+        if num_missing > 0:
+            self.log.warning(
+                "Image is missing {0} tile{1}. "
+                "You might want to download the image at a different zoom level "
+                "(currently using {2}) to get the missing part{1}."
+                .format(num_missing, '' if num_missing == 1 else 's', self.zoom_level)
+            )
+        if progressbar:
+            joining_progressbar.finish()
+
+    def save_image(self, destination):
+        self.log.info("Saving the image...")
+        try:
+            # Copy JPEG encoding information from a tile to use matching
+            # subsampling and quantization matrices when saving the image.
+            tile = Image.open(self.get_local_tile_path(0, 0))
+            for k in 'im', 'palette', 'mode', 'size':
+                tile.__dict__[k] = self.image.__dict__[k]
+            tile.save(destination, quality="keep", optimize=True)
+        except Exception as e:
+            self.log.error("Could not save image {}: {}.".format(destination, e))
 
     def get_url_list(self, url, use_list):
         """
@@ -370,7 +303,7 @@ class ImageUntiler():
 
                 self.image_urls.append(line[0])
 
-    def setup_tile_directory(self, in_local_dir, output_file_name=None):
+    def set_up_tile_directory(self, in_local_dir, output_file_name=None):
         """
         Create the directory in which tile downloading & joining takes place.
 
@@ -380,7 +313,7 @@ class ImageUntiler():
             used to derive the local directory's location
         """
         if in_local_dir:
-            root, ext = os.path.splitext(output_file_name)
+            root = os.path.splitext(output_file_name)[0]
 
             if not os.path.exists(root):
                 self.log.info("Creating image storage directory: {}".format(root))
@@ -501,7 +434,7 @@ class UntilerDezoomify(ImageUntiler):
 
         # GET THE NUMBER OF TILES AT THE REQUESTED ZOOM LEVEL
         self.maxx_tiles, self.maxy_tiles = self.levels[-1]
-        self.x_tiles,    self.y_tiles    = self.levels[self.zoom_level]
+        self.x_tiles, self.y_tiles = self.levels[self.zoom_level]
 
         self.log.info('\tMax zoom level:    {:d} (working zoom level: {:d})'.format(self.max_zoom - 1, self.zoom_level))
         self.log.info('\tWidth (overall):   {:d} (at given zoom level: {:d})'.format(self.max_width, self.width))
@@ -531,7 +464,7 @@ class UntilerDezoomify(ImageUntiler):
         # make the 0th level the smallest zoom, and higher levels, higher zoom
         self.levels.reverse()
         self.log.debug("self.levels = {}".format(self.levels))
-        
+
     def get_tile_index(self, level, x, y):
         """
         Get the zoomify index of a tile in a given level, at given co-ordinates
