@@ -51,7 +51,7 @@ def main():
                         help='the URL refers to a local file containing a list of URLs '
                         'or base directories to dezoomify. The output directory and '
                         'default filenames are derived from the "out" parameter. The list format '
-                        'is "<url>tab_character[filename]". Extensions are added automatically to the '
+                        'is "<url>(tab)[filename]". Extensions are added automatically to the '
                         'filenames, if they are missing.')
     parser.add_argument('-v', dest='verbose', action='count', default=0,
                         help="increase verbosity (specify multiple times for more)")
