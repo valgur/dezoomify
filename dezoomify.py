@@ -51,7 +51,7 @@ def main():
                         help='the URL refers to a local file containing a list of URLs '
                         'or base directories to dezoomify. The output directory and '
                         'default filenames are derived from the "out" parameter. The list format '
-                        'is "<url> [filename]". Extensions are added automatically to the '
+                        'is "<url>tab_character[filename]". Extensions are added automatically to the '
                         'filenames, if they are missing.')
     parser.add_argument('-v', dest='verbose', action='count', default=0,
                         help="increase verbosity (specify multiple times for more)")
@@ -157,8 +157,10 @@ class ImageUntiler():
             self.log.error("{} does not have execute permission."
                            .format(self.jpegtran))
             exit()
-        
-        #This might not work on Windows (different parameters?)
+        """
+        This might not work on Windows (different parameters?).
+        On the other hand, nonsense parameter should still spill out usage.
+        """ 
         subproc = subprocess.Popen([self.jpegtran, "--nonsense"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         
         try:
