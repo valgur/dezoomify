@@ -157,24 +157,20 @@ class ImageUntiler():
             self.log.error("{} does not have execute permission."
                            .format(self.jpegtran))
             exit()
-        """
-        This might not work on Windows (different parameters?).
-        On the other hand, nonsense parameter should still spill out usage.
-        """ 
-        subproc = subprocess.Popen([self.jpegtran, "--nonsense"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         
         try:
+            subproc = subprocess.Popen([self.jpegtran, '--help'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             jpegtran_help_info = str(subproc.communicate(timeout=5))
             if '-drop' not in jpegtran_help_info:
                 self.log.error("{} does not have the '-drop' feature. "
-                "Either use the jpegtran supplied with Dezoomify or get it from "
-                "http://jpegclub.org/jpegtran/ section \"3. Lossless crop 'n' drop (cut & paste)\" to fix the problem."
-                .format(self.jpegtran))
+                    "Either use the jpegtran supplied with Dezoomify or get it from "
+                    "http://jpegclub.org/jpegtran/ section \"3. Lossless crop 'n' drop (cut & paste)\" to fix the problem."
+                    .format(self.jpegtran))
                 subproc.kill()
                 exit()
         except Exception:
             subproc.kill()
-            print("Communication with JpegTran has failed and the process was killed.")
+            self.log.error("Communication with JpegTran has failed and the process was killed.")
             exit()
 
         self.tile_dir = None
