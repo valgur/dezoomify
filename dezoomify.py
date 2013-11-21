@@ -39,38 +39,38 @@ except ImportError:
     pass
 
 def main():
-    parser = argparse.ArgumentParser()  # usage='Usage: %(prog)s <source> <output file> [options]'
-    parser.add_argument('url', action='store',
+    parser = argparse.ArgumentParser(
+        description="Download and untile a Zoomify image.",
+        epilog="More detailed help can be found in the project's wiki: http://sf.net/p/dezoomify/wiki/",
+        usage='%(prog)s URL OUTPUT_FILE [options]'
+    )
+    parser.add_argument('url', metavar='URL', action='store',
                         help='the URL of a page containing a Zoomify object '
-                        '(unless -b or -l flags are set)')
-    parser.add_argument('out', action='store',
-                        help='the output file for the image')
+                        '(unless -b or -l flags are used)')
+    parser.add_argument('out', metavar='OUTPUT_FILE', action='store',
+                        help='where to save the image')
     parser.add_argument('-b', dest='base', action='store_true', default=False,
-        help='the URL is the base directory for the Zoomify tile structure')
+        help='the URL is the base directory for the Zoomify tile structure (see wiki for more details)')
     parser.add_argument('-l', dest='list', action='store_true', default=False,
-                        help='the URL refers to a local file containing a list of URLs '
-                        'or base directories to dezoomify. The output directory and '
-                        'default filenames are derived from the "out" parameter. The list format '
-                        'is "<url>(tab)[filename]". Extensions are added automatically to the '
-                        'filenames, if they are missing.')
-    parser.add_argument('-v', dest='verbose', action='count', default=0,
-                        help="increase verbosity (specify multiple times for more)")
+                        help='batch mode: the URL parameter refers to a local file with a list of URL and filename pairs (one pair per line, separated by a tab). '
+                        'The directory in which the images will be saved will be OUTPUT_FILE minus its extension. '
+                        'Specifying a filename is optional, OUTPUT_FILE with numbers appended is used by default.')
     parser.add_argument('-z', dest='zoom_level', action='store', default=False,
-                        help='zoom level to grab image at (can be useful if some of a '
-                        'higher zoom level is corrupted or missing)')
+                        help='zoom level to grab the image at (defaults to maximum)')
     parser.add_argument('-s', dest='store', action='store_true', default=False,
-                        help='save all tiles in the local folder instead of the '
-                        'system\'s temporary directory')
-    parser.add_argument('-j', dest='jpegtran', action='store',
-                        help='location of jpegtran executable (assumed to be in the '
-                        'same directory as this script by default)')
+                        help='save all tiles in the local directory instead of the system\'s temporary directory')
     parser.add_argument('-x', dest='no_download', action='store_true', default=False,
                         help='create the image from previously downloaded files stored '
-                        'with -s (can be useful when an error occurred during tile joining)')
+                        'with -s instead of downloading (can be useful when an error occurred during tile joining)')
+    parser.add_argument('-j', dest='jpegtran', action='store',
+                        help='location of the jpegtran executable (assumed to be in the '
+                        'same directory as this script by default)')
     parser.add_argument('-t', dest='nthreads', action='store', default=16,
-                        help='how many downloads will be made in parallel (default: 16)')
-    parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
-                        help='which image tiler protocol to use (options: zoomify. Default: zoomify)')
+                        help='number of simultaneous tile downloads (default: 16)')
+    #parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
+    #                    help='which image tiler protocol to use (options: zoomify. Default: zoomify)')
+    parser.add_argument('-v', dest='verbose', action='count', default=0,
+                        help="increase verbosity (-vv for more)")
     args = parser.parse_args()
     UntilerDezoomify(args)
 
