@@ -179,6 +179,7 @@ class ImageUntiler():
 
         self.tile_dir = None
         self.get_url_list(args.url, args.list)
+
         for i, image_url in enumerate(self.image_urls):
             destination = self.out_names[i]
             if len(self.image_urls) > 1:
@@ -202,6 +203,7 @@ class ImageUntiler():
 
                 # download and join tiles to create the dezoomified file
                 self.untile_image(destination)
+
             finally:
                 if not self.store and self.tile_dir:
                     shutil.rmtree(self.tile_dir)
@@ -365,21 +367,24 @@ class ImageUntiler():
             i = 1
             for line in list_file:
                 line = line.strip().split('\t', 1)
+                if len(line[0]) > 0 and not line[0].isspace():    #Checks for empty lines - only eith newlines
 
-                if len(line) == 1:
-                    root, ext = os.path.splitext(self.out)
-                    self.out_names.append("{}{:3d}{}".format(root, i, ext))
-                    i += 1
-                elif len(line) == 2:
-                    # allow filenames to lack extensions
-                    m = re.search('\\.' + self.ext + '$', line[1])
-                    if not m:
-                        line[1] += '.' + self.ext
-                    self.out_names.append(os.path.join(os.path.dirname(self.out), line[1]))
-                else:
-                    continue
+                    if len(line) == 1:
+                        root, ext = os.path.splitext(self.out)
+                        self.out_names.append("{}{:3d}{}".format(root, i, ext))
+                        i += 1
+                    elif len(line) == 2:
+                        # allow filenames to lack extensions
+                        m = re.search('\\.' + self.ext + '$', line[1])
+                        if not m:
+                            line[1] += '.' + self.ext
+                        self.out_names.append(os.path.join(os.path.dirname(self.out), line[1]))
+                    else:
+                        continue
 
-                self.image_urls.append(line[0])
+                    self.image_urls.append(line[0])
+                
+            list_file.close()
 
     def setup_tile_directory(self, in_local_dir, output_file_name=None):
         """
