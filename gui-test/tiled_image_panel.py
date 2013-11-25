@@ -234,7 +234,7 @@ class TiledImagePanel(BufferedScrolledWindow):
         try:
             fullImage = Image.new('RGB', (self.size[0], self.size[1]), self.backgroundColour)
         except MemoryError:
-            print "ERR: Image too large to fit into memory. Exiting"
+            print("ERR: Image too large to fit into memory. Exiting")
             sys.exit(2)
         
         for coord in self.tileDict:
