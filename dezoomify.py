@@ -552,7 +552,7 @@ class ImageUntiler():
             used to derive the local directory's location
         """
         if in_local_dir:
-            root, ext = os.path.splitext(output_file_name)
+            root = os.path.splitext(output_file_name)[0]
 
             if not os.path.exists(root):
                 self.log.info("Creating image storage directory: {}".format(root))
