@@ -325,8 +325,11 @@ class ImageUntiler():
                         if not progressbar:
                             self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
 
-                        # As the very first step create an (almost) empty temp column image with the target column dimensions.
-                        if tile_in_column == 0 and current_col == 0:
+                        # As the very first step create an (almost) empty temp column image,
+                        # with the target column dimensions.
+                        # Don't reuse old tempfile without overwriting it first - 
+                        # if the file is broken, we want an empty space instead of an image from previous iteration.
+                        if tile_in_column == 0 and not current_col == self.x_tiles-1:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-copy', 'all',
                                 '-crop', '{:d}x{:d}+0+0'.format(self.tile_size, self.height),
