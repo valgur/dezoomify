@@ -307,26 +307,26 @@ class ImageUntiler():
                     fhandle.close()
                     self.log.debug("Created temporary image file: " + tempinfo[f][i])
 
-            # The index of current temp image to be used for input, toggles between 0 and 1.
+            # The index of current_col temp image to be used for input, toggles between 0 and 1.
             active_tmp = 0
             active_final= 0
 
             # Join tiles into a single image in parallel to them being downloaded.
             try:
                 subproc = None # Popen class of the most recently called subprocess.
-                current = 0
-                a = 0
+                current_col = 0
+                tile_in_column = 0
                 for i, (col, row) in enumerate(self.downloaded_iterator):
                     if col is None:
                         self.log.info("Missing col tile!")
                         continue # Tile failed to download.
 
-                    if col == current:
+                    if col == current_col:
                         if not progressbar:
                             self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
 
                         # As the very first step create an (almost) empty temp column image with the target column dimensions.
-                        if a == 0 and current == 0:
+                        if tile_in_column == 0 and current_col == 0:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-copy', 'all',
                                 '-crop', '{:d}x{:d}+0+0'.format(self.tile_size, self.height),
@@ -335,7 +335,7 @@ class ImageUntiler():
                             ])
                             subproc.wait()
                         # Last column may have different width - create tempfile with correct dimensions
-                        elif a == 0 and current == self.x_tiles-1:
+                        elif tile_in_column == 0 and current_col == self.x_tiles-1:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-copy', 'all',
                                 '-crop', '{:d}x{:d}+0+0'.format(self.width - ((self.x_tiles - 1) * self.tile_size), self.height),
@@ -358,7 +358,7 @@ class ImageUntiler():
 
                         # After untiling of a first column, 
                         # create a full sized temp image with the just untiled column
-                        if a == self.y_tiles-1 and current == 0:
+                        if tile_in_column == self.y_tiles-1 and current_col == 0:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-perfect',
                                 '-copy', 'all',
@@ -367,27 +367,27 @@ class ImageUntiler():
                                 tmpimgs[active_tmp]
                             ])
                             subproc.wait()
-                            current += 1
-                            a = 0
+                            current_col += 1
+                            tile_in_column = 0
                             active_final = (active_final + 1) % 2
                             active_tmp = (active_tmp + 1) % 2
                         # Drop just untiled column (other then first) into the full sized temp image.
-                        elif a == self.y_tiles-1 and not current == 0:
+                        elif tile_in_column == self.y_tiles-1 and not current_col == 0:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-perfect',
                                 '-copy', 'all',
-                                '-drop', '+{:d}+{:d}'.format(current * self.tile_size, 0), tmpimgs[active_tmp],
+                                '-drop', '+{:d}+{:d}'.format(current_col * self.tile_size, 0), tmpimgs[active_tmp],
                                 '-outfile', finalimage[active_final],
                                 finalimage[(active_final + 1) % 2]
                             ])
                             subproc.wait()
-                            current += 1
-                            a = 0
+                            current_col += 1
+                            tile_in_column = 0
                             active_final = (active_final + 1) % 2
                             active_tmp = (active_tmp + 1) % 2
                         # No column completely untiled, keep working
                         else:
-                            a += 1
+                            tile_in_column += 1
                             active_tmp = (active_tmp + 1) % 2  # toggle between the two temp images
 
                 # Optimize the final  image and write it to destination
