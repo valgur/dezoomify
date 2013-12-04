@@ -69,16 +69,17 @@ def main():
                         help='number of simultaneous tile downloads (default: 16)')
     #parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
     #                    help='which image untiler protocol to use (options: zoomify. Default: zoomify)')
-    parser.add_argument('-a', dest='algorithm', action='store', default='jt_xl',
-                        choices=['jt_std', 'jt_xl'],
-                        help='which image untiler algorithm to use.'
-                        'Options:'
-                        '    - jt_std (jpegtran standard classic - lossless)'
-                        '             Proven classic, slow for large images.'
-                        '    - jt_xl (jpegtran large image - lossless)'
-                        '            New, way faster for large images.'
-#                        '    - pil (Python  Pillow - almost lossless - not yet implemented)'
-                        'Default: jt_xl')
+    # This is commented out for now. Will probably reintroduce this option when Pillow is integrated.
+    # parser.add_argument('-a', dest='algorithm', action='store', default='jt_xl',
+                        # choices=['jt_std', 'jt_xl'],
+                        # help='which image untiler algorithm to use.'
+                        # 'Options:'
+                        # '    - jt_std (jpegtran standard classic - lossless)'
+                        # '             Proven classic, slow for large images.'
+                        # '    - jt_xl (jpegtran large image - lossless)'
+                        # '            New, way faster for large images.'
+# #                        '    - pil (Python  Pillow - almost lossless - not yet implemented)'
+                        # 'Default: jt_xl')
     parser.add_argument('-v', dest='verbose', action='count', default=0,
                         help="increase verbosity (-vv for more)")
     args = parser.parse_args()
@@ -130,7 +131,7 @@ class ImageUntiler():
         self.jpegtran = args.jpegtran
         self.no_download = args.no_download
         self.nthreads = int(args.nthreads)
-        self.algorithm = args.algorithm
+        # self.algorithm = args.algorithm
 
         if self.no_download:
             self.store = True
@@ -236,8 +237,6 @@ class ImageUntiler():
                            progressbar.ETA()],
                 maxval = self.num_tiles
             )
-            download_progressbar.start()
-
             joining_progressbar = progressbar.ProgressBar(
                 widgets = ['Joining tiles: ',
                            progressbar.Counter(), '/', str(self.num_tiles), ' ',
@@ -245,6 +244,22 @@ class ImageUntiler():
                            progressbar.ETA()],
                 maxval = self.num_tiles
             )
+            download_progressbar.start()
+            if self.no_download:
+                download_progressbar.finish()
+                joining_progressbar.start()
+        
+        def update_progressbars():
+            # Update UI info
+            if progressbar:
+                if self.num_downloaded < self.num_tiles:
+                    download_progressbar.update(self.num_downloaded)
+                elif not download_progressbar.finished:
+                    download_progressbar.finish()
+                    joining_progressbar.start()
+                    joining_progressbar.update(self.num_joined)  # There are already images  joined!
+                else:
+                    joining_progressbar.update(self.num_joined)
 
         def local_tile_path(col, row):
             return os.path.join(self.tile_dir, "{}_{}.{}".format(col, row, self.ext))
@@ -273,21 +288,6 @@ class ImageUntiler():
         else:
             self.downloaded_iterator = tile_positions
             self.num_downloaded = self.num_tiles
-
-        def update_progressbars(self, joining_progressbar, downloaded_iterator):
-            self.num_joined += 1
-            # Update UI info
-            if not self.no_download:
-                self.num_downloaded = downloaded_iterator._index
-            if progressbar:
-                if self.num_downloaded < self.num_tiles:
-                    download_progressbar.update(self.num_downloaded)
-                elif not download_progressbar.finished:
-                    download_progressbar.finish()
-                    joining_progressbar.start()
-                    joining_progressbar.update(self.num_joined)  # There are already images  joined!
-                else:
-                    joining_progressbar.update(self.num_joined)
 
         def jplarge(self, joining_progressbar):
             """
@@ -357,7 +357,8 @@ class ImageUntiler():
                             ])
                             subproc.wait()
 
-                        update_progressbars(self, joining_progressbar, self.downloaded_iterator)
+                        self.num_joined += 1
+                        update_progressbars()
 
                         # After untiling of a first column, 
                         # create a full sized temp image with the just untiled column
@@ -425,90 +426,12 @@ class ImageUntiler():
                     os.unlink(tmpimgs[i])
                     os.unlink(finalimage[i])
 
-        def jpstandard(self, joining_progressbar):
-            """
-            Original untiling procedure
-            """
-
-            # Do tile joining in parallel with the downloading.
-            # Use two temporary files for the joining process.
-            tmpimgs = [None, None]
-            for i in range(2):
-                fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', dir=self.tile_dir, delete=False)
-                tmpimgs[i] = fhandle.name
-                fhandle.close()
-                self.log.debug("Created temporary image file: " + tmpimgs[i])
-
-            # The index of current temp image to be used for input, toggles between 0 and 1.
-            active_tmp = 0
-
-            # Join tiles into a single image in parallel to them being downloaded.
-            try:
-                subproc = None # Popen class of the most recently called subprocess.
-                for i, (col, row) in enumerate(self.downloaded_iterator):
-                    if col is None: continue # Tile failed to download.
-
-                    if not progressbar:
-                        self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
-
-                    # As the very first step create an (almost) empty image with the target dimensions.
-                    if i == 0:
-                        subproc = subprocess.Popen([self.jpegtran,
-                            '-copy', 'all',
-                            '-crop', '{:d}x{:d}+0+0'.format(self.width, self.height),
-                            '-outfile', tmpimgs[active_tmp],
-                            local_tile_path(col, row)
-                        ])
-                        subproc.wait()
-
-                    subproc = subprocess.Popen([self.jpegtran,
-                        '-copy', 'all',
-                        '-drop', '+{:d}+{:d}'.format(col * self.tile_size, row * self.tile_size), local_tile_path(col, row),
-                        '-outfile', tmpimgs[(active_tmp + 1) % 2],
-                        tmpimgs[active_tmp]
-                    ])
-                    subproc.wait()
-
-                    active_tmp = (active_tmp + 1) % 2  # toggle between the two temp images
-
-                    update_progressbars(self, joining_progressbar, self.downloaded_iterator)
-
-                # Make a final optimization pass and save the image to the output file.
-                subproc = subprocess.Popen([self.jpegtran,
-                    '-copy', 'all',
-                    '-optimize',
-                    '-outfile', output_destination,
-                    tmpimgs[active_tmp]
-                ])
-                subproc.wait()
-
-                num_missing = self.num_tiles - self.num_joined
-                if num_missing > 0:
-                    self.log.warning(
-                        "Image '{3}' is missing {0} tile{1}. "
-                        "You might want to download the image at a different zoom level "
-                        "(currently {2}) to get the missing part{1}."
-                        .format(num_missing, '' if num_missing == 1 else 's', self.zoom_level,
-                                output_destination)
-                    )
-                if progressbar:
-                    joining_progressbar.finish()
-
-            except KeyboardInterrupt:
-                # Kill the jpegtran subprocess.
-                if subproc and subproc.poll() is None:
-                    subproc.kill()
-                raise
-            finally:
-                # Delete the temporary images.
-                os.unlink(tmpimgs[0])
-                os.unlink(tmpimgs[1])
-
         # Select untiling algorithm
-        if self.algorithm == 'jt_xl':
-            jplarge(self, joining_progressbar)
-        elif self.algorithm == 'jt_std':
-            jpstandard(self, joining_progressbar)
+        # if self.algorithm == 'jt_xl':
+            # jplarge(self, joining_progressbar)
+        # elif self.algorithm == 'jt_std':
+            # jpstandard(self, joining_progressbar)
+        jplarge(self, joining_progressbar)
 
     def get_url_list(self, url, use_list):
         """
@@ -686,7 +609,7 @@ class UntilerDezoomify(ImageUntiler):
         self.log.info('\tHeight (in tiles): {:d} (at given level: {:d})'.format(self.maxy_tiles, self.y_tiles))
         self.log.info('\tTotal tiles:       {:d} (to be retrieved: {:d})'.format(self.maxx_tiles * self.maxy_tiles,
                                                                          self.x_tiles * self.y_tiles))
-        self.log.info("\tUsing {} joining algorithm.".format(self.algorithm))
+        # self.log.info("\tUsing {} joining algorithm.".format(self.algorithm))
 
     def get_zoom_levels(self):
         """Construct a list of all zoomlevels with sizes in tiles"""
