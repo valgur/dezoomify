@@ -248,7 +248,7 @@ class ImageUntiler():
             if self.no_download:
                 download_progressbar.finish()
                 joining_progressbar.start()
-        
+
         def update_progressbars():
             # Update UI info
             if progressbar:
@@ -273,11 +273,13 @@ class ImageUntiler():
             try:
                 download_url(url, destination)
             except urllib.error.HTTPError as e:
+                self.num_downloaded += 1
                 self.log.warning(
                     "{}. Tile {} (row {}, col {}) does not exist on the server."
                     .format(e, url, row, col)
                 )
                 return (None, None)
+            self.num_downloaded += 1
             return tile_position
 
         # Download tiles in self.nthreads parallel threads.
@@ -293,7 +295,7 @@ class ImageUntiler():
             """
             Faster untilig algorithm, assembling columns separately,
             then assembling those into final image. Cuts down on the cost
-            of constantly opening two huge final images.  
+            of constantly opening two huge final images.
             """
             # Do tile joining in parallel with the downloading.
             # Use 4 temporary files for the joining process.
@@ -327,7 +329,7 @@ class ImageUntiler():
 
                         # As the very first step create an (almost) empty temp column image,
                         # with the target column dimensions.
-                        # Don't reuse old tempfile without overwriting it first - 
+                        # Don't reuse old tempfile without overwriting it first -
                         # if the file is broken, we want an empty space instead of an image from previous iteration.
                         if tile_in_column == 0 and not current_col == self.x_tiles-1:
                             subproc = subprocess.Popen([self.jpegtran,
@@ -360,7 +362,7 @@ class ImageUntiler():
                         self.num_joined += 1
                         update_progressbars()
 
-                        # After untiling of a first column, 
+                        # After untiling of a first column,
                         # create a full sized temp image with the just untiled column
                         if tile_in_column == self.y_tiles-1 and current_col == 0:
                             subproc = subprocess.Popen([self.jpegtran,
@@ -412,7 +414,7 @@ class ImageUntiler():
                         .format(num_missing, '' if num_missing == 1 else 's', self.zoom_level,
                             output_destination)
                     )
-                if progressbar:
+                if progressbar and joining_progressbar.start_time is not None:
                     joining_progressbar.finish()
 
             except KeyboardInterrupt:
@@ -453,7 +455,7 @@ class ImageUntiler():
 
                     if len(line) == 1:
                         root, ext = os.path.splitext(self.out)
-                        self.out_names.append("{}{:3d}{}".format(root, i, ext))
+                        self.out_names.append("{}{:03d}{}".format(root, i, ext))
                         i += 1
                     elif len(line) == 2:
                         # allow filenames to lack extensions
@@ -465,7 +467,7 @@ class ImageUntiler():
                         continue
 
                     self.image_urls.append(line[0])
-                
+
             list_file.close()
 
     def setup_tile_directory(self, in_local_dir, output_file_name=None):
@@ -630,7 +632,7 @@ class UntilerDezoomify(ImageUntiler):
         # make the 0th level the smallest zoom, and higher levels, higher zoom
         self.levels.reverse()
         self.log.debug("self.levels = {}".format(self.levels))
-        
+
     def get_tile_index(self, level, x, y):
         """
         Get the zoomify index of a tile in a given level, at given co-ordinates
