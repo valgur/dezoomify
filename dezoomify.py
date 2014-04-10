@@ -98,7 +98,7 @@ def open_url(url):
 
     # Escape the path part of the URL so spaces in it would not confuse the server.
     scheme, netloc, path, qs, anchor = urllib.parse.urlsplit(url)
-    path = urllib.parse.quote(path, '/%')
+    path = urllib.parse.quote(path, '/%:|')
     qs = urllib.parse.quote_plus(qs, ':&=')
     url = urllib.parse.urlunsplit((scheme, netloc, path, qs, anchor))
 
