@@ -54,8 +54,10 @@ parser.add_argument('-l', dest='list', action='store_true', default=False,
                     help='batch mode: the URL parameter refers to a local file with a list of URL and filename pairs (one pair per line, separated by a tab). '
                          'The directory in which the images will be saved will be OUTPUT_FILE minus its extension. '
                          'Specifying a filename is optional, OUTPUT_FILE with numbers appended is used by default.')
-parser.add_argument('-z', dest='zoom_level', action='store', default=False,
-                    help='zoom level to grab the image at (defaults to maximum)')
+parser.add_argument('-z', dest='zoom_level', action='store', default=-1, type=int,
+                    help='Zoom level to grab the image at (defaults to maximum). '
+                         'For positive zoom level values, the untiled image\' longest edge length is less or equal to (tile size) * 2^(zoom level). '
+                         'For negative values, the untiled image\'s longest edge length equals (maximum length) / 2^(1 - zoom level).')
 parser.add_argument('-s', dest='store', action='store_true', default=False,
                     help='save all tiles in the local directory instead of the system\'s temporary directory')
 parser.add_argument('-x', dest='no_download', action='store_true', default=False,
@@ -64,7 +66,7 @@ parser.add_argument('-x', dest='no_download', action='store_true', default=False
 parser.add_argument('-j', dest='jpegtran', action='store',
                     help='location of the jpegtran executable (assumed to be in the '
                          'same directory as this script by default)')
-parser.add_argument('-t', dest='nthreads', action='store', default=16,
+parser.add_argument('-t', dest='nthreads', action='store', default=16, type=int,
                     help='number of simultaneous tile downloads (default: 16)')
 #parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
 #                    help='which image untiler protocol to use (options: zoomify. Default: zoomify)')
@@ -119,6 +121,9 @@ def download_url(url, destination):
         shutil.copyfileobj(response, out_file)
 
 class JpegtranException(Exception):
+    pass
+
+class ZoomLevelError(Exception):
     pass
 
 class ImageUntiler():
@@ -198,10 +203,10 @@ class ImageUntiler():
             self.process_image(self.image_urls[0], self.out_names[0])
             self.log.info("Dezoomifed image created and saved to {}.".format(self.out_names[0]))
         else:
-        for i, image_url in enumerate(self.image_urls):
-            destination = self.out_names[i]
+            for i, image_url in enumerate(self.image_urls):
+                destination = self.out_names[i]
                 self.log.info("[{}/{}] Processing image {}...".format(i + 1, len(self.image_urls), image_url))
-            try:
+                try:
                     self.process_image(image_url, destination)
                 except Exception as e:
                     if not isinstance(e, (FileNotFoundError, JpegtranException, ZoomLevelError)):
@@ -211,27 +216,27 @@ class ImageUntiler():
     def process_image(self, image_url, destination):
         """Scrapes image info and calls the untiler."""
         if not self.base:
-                    # locate the base directory of the zoomify tile images
-                    self.base_dir = self.get_base_directory(image_url)
-                else:
-                    self.base_dir = image_url
-                    if self.base_dir.endswith('/ImageProperties.xml'):
-                        self.base_dir = urllib.parse.urljoin(self.base_dir, '.')
-                    self.base_dir = self.base_dir.rstrip('/') + '/'
+            # locate the base directory of the zoomify tile images
+            self.base_dir = self.get_base_directory(image_url)
+        else:
+            self.base_dir = image_url
+            if self.base_dir.endswith('/ImageProperties.xml'):
+                self.base_dir = urllib.parse.urljoin(self.base_dir, '.')
+            self.base_dir = self.base_dir.rstrip('/') + '/'
 
-                try:
-                    # inspect the ImageProperties.xml file to get properties, and derive the rest
+        try:
+            # inspect the ImageProperties.xml file to get properties, and derive the rest
             self.get_properties(self.base_dir, self.zoom_level)
 
-                    # create the directory where the tiles are stored
-                    self.setup_tile_directory(self.store, destination)
+            # create the directory where the tiles are stored
+            self.setup_tile_directory(self.store, destination)
 
-                    # download and join tiles to create the dezoomified file
-                    self.untile_image(destination)
+            # download and join tiles to create the dezoomified file
+            self.untile_image(destination)
 
-                finally:
-                    if not self.store and self.tile_dir:
-                        shutil.rmtree(self.tile_dir)
+        finally:
+            if not self.store and self.tile_dir:
+                shutil.rmtree(self.tile_dir)
                 self.log.debug("Erased the temporary directory and its contents")
 
     def untile_image(self, output_destination):
@@ -597,25 +602,24 @@ class UntilerDezoomify(ImageUntiler):
         # PROCESS PROPERTIES TO GET ADDITIONAL DERIVABLE PROPERTIES
 
         self.get_zoom_levels()  # get one-indexed maximum zoom level
-        self.max_zoom = len(self.levels)
+        self.max_zoom = len(self.levels) - 1
 
         # GET THE REQUESTED ZOOMLEVEL
-        if not zoom_level:  # none requested, using maximum
-            self.zoom_level = self.max_zoom - 1
+        zoom_level = int(zoom_level)
+        if 0 <= zoom_level <= self.max_zoom:
+            self.zoom_level = zoom_level
+        elif -self.max_zoom - 1 <= zoom_level <= -1:
+            self.zoom_level = self.max_zoom + zoom_level + 1
         else:
-            zoom_level = int(zoom_level)
-            if zoom_level < self.max_zoom and zoom_level >= 0:
-                self.zoom_level = zoom_level
-            else:
-                self.zoom_level = self.max_zoom - 1
-                self.log.warning(
-                    "The requested zoom level is not available, "
-                    "defaulting to maximum ({:d})".format(self.zoom_level)
-                )
+            self.log.error(
+                "The requested zoom level {} is not available. Possible values are {} to {}."
+                .format(zoom_level, -self.max_zoom - 1, self.max_zoom)
+            )
+            raise ZoomLevelError
 
-        # GET THE SIZE AT THE RQUESTED ZOOM LEVEL
-        self.width  = int(self.max_width  / 2 ** (self.max_zoom - self.zoom_level - 1))
-        self.height = int(self.max_height / 2 ** (self.max_zoom - self.zoom_level - 1))
+        # GET THE SIZE AT THE REQUESTED ZOOM LEVEL
+        self.width  = int(self.max_width  / 2 ** (self.max_zoom - self.zoom_level))
+        self.height = int(self.max_height / 2 ** (self.max_zoom - self.zoom_level))
 
         # GET THE NUMBER OF TILES AT THE REQUESTED ZOOM LEVEL
         self.maxx_tiles, self.maxy_tiles = self.levels[-1]
@@ -663,9 +667,9 @@ class UntilerDezoomify(ImageUntiler):
         Returns -- the zoomify index
         """
 
-        index = x + y * int(ceil(floor(self.width / pow(2, self.max_zoom - level - 1)) / self.tile_size))
+        index = x + y * int(ceil(floor(self.width / pow(2, self.max_zoom - level)) / self.tile_size))
 
-        for i in range(1, level + 1):
+        for i in range(level):
             index += int(ceil(floor(self.width / pow(2, self.max_zoom - i)) / self.tile_size)) * \
                      int(ceil(floor(self.height / pow(2, self.max_zoom - i)) / self.tile_size))
 
@@ -686,6 +690,8 @@ if __name__ == "__main__":
     try:
         UntilerDezoomify(args)
     except FileNotFoundError:
+        pass
+    except ZoomLevelError:
         pass
     except JpegtranException:
         pass
