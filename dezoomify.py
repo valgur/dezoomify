@@ -14,7 +14,7 @@ This software is licensed under the Expat License (also called the MIT license).
 import sys
 
 if sys.version_info[0] < 3:
-    sys.exit("ERR: This program requires Python 3 to run.")
+    sys.exit("ERROR: This program requires Python 3 to run.")
 
 from math import ceil, floor
 import argparse
@@ -38,53 +38,49 @@ try:
 except ImportError:
     pass
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Download and untile a Zoomify image.",
-        epilog="More detailed help can be found in the project's wiki: http://sf.net/p/dezoomify/wiki/",
-        usage='%(prog)s URL OUTPUT_FILE [options]'
-    )
-    parser.add_argument('url', metavar='URL', action='store',
-                        help='the URL of a page containing a Zoomify object '
-                        '(unless -b or -l flags are used)')
-    parser.add_argument('out', metavar='OUTPUT_FILE', action='store',
-                        help='where to save the image')
-    parser.add_argument('-b', dest='base', action='store_true', default=False,
-        help='the URL is the base directory for the Zoomify tile structure (see wiki for more details)')
-    parser.add_argument('-l', dest='list', action='store_true', default=False,
-                        help='batch mode: the URL parameter refers to a local file with a list of URL and filename pairs (one pair per line, separated by a tab). '
-                        'The directory in which the images will be saved will be OUTPUT_FILE minus its extension. '
-                        'Specifying a filename is optional, OUTPUT_FILE with numbers appended is used by default.')
-    parser.add_argument('-z', dest='zoom_level', action='store', default=False,
-                        help='zoom level to grab the image at (defaults to maximum)')
-    parser.add_argument('-s', dest='store', action='store_true', default=False,
-                        help='save all tiles in the local directory instead of the system\'s temporary directory')
-    parser.add_argument('-x', dest='no_download', action='store_true', default=False,
-                        help='create the image from previously downloaded files stored '
-                        'with -s instead of downloading (can be useful when an error occurred during tile joining)')
-    parser.add_argument('-j', dest='jpegtran', action='store',
-                        help='location of the jpegtran executable (assumed to be in the '
-                        'same directory as this script by default)')
-    parser.add_argument('-t', dest='nthreads', action='store', default=16,
-                        help='number of simultaneous tile downloads (default: 16)')
-    #parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
-    #                    help='which image untiler protocol to use (options: zoomify. Default: zoomify)')
-    # This is commented out for now. Will probably reintroduce this option when Pillow is integrated.
-    # parser.add_argument('-a', dest='algorithm', action='store', default='jt_xl',
-                        # choices=['jt_std', 'jt_xl'],
-                        # help='which image untiler algorithm to use.'
-                        # 'Options:'
-                        # '    - jt_std (jpegtran standard classic - lossless)'
-                        # '             Proven classic, slow for large images.'
-                        # '    - jt_xl (jpegtran large image - lossless)'
-                        # '            New, way faster for large images.'
-# #                        '    - pil (Python  Pillow - almost lossless - not yet implemented)'
-                        # 'Default: jt_xl')
-    parser.add_argument('-v', dest='verbose', action='count', default=0,
-                        help="increase verbosity (-vv for more)")
-    args = parser.parse_args()
-    UntilerDezoomify(args)
-
+parser = argparse.ArgumentParser(
+    description="Download and untile a Zoomify image.",
+    epilog="More detailed help can be found at the project's wiki: http://sf.net/p/dezoomify/wiki/",
+    usage='%(prog)s URL OUTPUT_FILE [options]'
+)
+parser.add_argument('url', metavar='URL', action='store',
+                    help='the URL of a page containing a Zoomify object '
+                         '(unless -b or -l flags are used)')
+parser.add_argument('out', metavar='OUTPUT_FILE', action='store',
+                    help='where to save the image')
+parser.add_argument('-b', dest='base', action='store_true', default=False,
+                    help='the URL is the base directory for the Zoomify tile structure (see wiki for more details)')
+parser.add_argument('-l', dest='list', action='store_true', default=False,
+                    help='batch mode: the URL parameter refers to a local file with a list of URL and filename pairs (one pair per line, separated by a tab). '
+                         'The directory in which the images will be saved will be OUTPUT_FILE minus its extension. '
+                         'Specifying a filename is optional, OUTPUT_FILE with numbers appended is used by default.')
+parser.add_argument('-z', dest='zoom_level', action='store', default=False,
+                    help='zoom level to grab the image at (defaults to maximum)')
+parser.add_argument('-s', dest='store', action='store_true', default=False,
+                    help='save all tiles in the local directory instead of the system\'s temporary directory')
+parser.add_argument('-x', dest='no_download', action='store_true', default=False,
+                    help='create the image from previously downloaded files stored '
+                         'with -s instead of downloading (can be useful when an error occurred during tile joining)')
+parser.add_argument('-j', dest='jpegtran', action='store',
+                    help='location of the jpegtran executable (assumed to be in the '
+                         'same directory as this script by default)')
+parser.add_argument('-t', dest='nthreads', action='store', default=16,
+                    help='number of simultaneous tile downloads (default: 16)')
+#parser.add_argument('-p', dest='protocol', action='store', default='zoomify',
+#                    help='which image untiler protocol to use (options: zoomify. Default: zoomify)')
+# This is commented out for now. Will probably reintroduce this option when Pillow is integrated.
+# parser.add_argument('-a', dest='algorithm', action='store', default='jt_xl',
+# choices=['jt_std', 'jt_xl'],
+# help='which image untiler algorithm to use.'
+# 'Options:'
+# '    - jt_std (jpegtran standard classic - lossless)'
+# '             Proven classic, slow for large images.'
+# '    - jt_xl (jpegtran large image - lossless)'
+# '            New, way faster for large images.'
+# '    - pil (Python  Pillow - almost lossless - not yet implemented)'
+# 'Default: jt_xl')
+parser.add_argument('-v', dest='verbose', action='count', default=0,
+                    help="increase verbosity (-vv for more)")
 
 def open_url(url):
     """
@@ -114,6 +110,7 @@ def open_url(url):
     # open a connection and receive the http response headers + contents
     return opener.open(request)
 
+
 def download_url(url, destination):
     """
     Copy a network object denoted by a URL to a local file.
@@ -121,6 +118,8 @@ def download_url(url, destination):
     with open_url(url) as response, open(destination, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
 
+class JpegtranException(Exception):
+    pass
 
 class ImageUntiler():
     def __init__(self, args):
@@ -158,32 +157,32 @@ class ImageUntiler():
             else:
                 self.log.error("No jpegtran excecutable found at the script's directory. "
                                "Use -j option to set its location.")
-                exit()
+                raise JpegtranException
 
         # Check that jpegtran exists and has the lossless drop feature.
         if not os.path.exists(self.jpegtran):
             self.log.error("jpegtran excecutable not found. "
                            "Use -j option to set its location.")
-            exit()
+            raise JpegtranException
         elif not os.access(self.jpegtran, os.X_OK):
             self.log.error("{} does not have execute permission."
-                           .format(self.jpegtran))
-            exit()
+            .format(self.jpegtran))
+            raise JpegtranException
 
         try:
             subproc = subprocess.Popen([self.jpegtran, '--help'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             jpegtran_help_info = str(subproc.communicate(timeout=5))
             if '-drop' not in jpegtran_help_info:
                 self.log.error("{} does not have the '-drop' feature. "
-                    "Either use the jpegtran supplied with Dezoomify or get it from "
-                    "http://jpegclub.org/jpegtran/ section \"3. Lossless crop 'n' drop (cut & paste)\" to fix the problem."
-                    .format(self.jpegtran))
+                               "Either use the jpegtran supplied with Dezoomify or get it from "
+                               "http://jpegclub.org/jpegtran/ section \"3. Lossless crop 'n' drop (cut & paste)\" to fix the problem."
+                .format(self.jpegtran))
                 subproc.kill()
-                exit()
+                raise JpegtranException
         except Exception:
             subproc.kill()
-            self.log.error("Communication with JpegTran has failed and the process was killed.")
-            exit()
+            self.log.error("Communication with Jpegtran has failed and the process was killed.")
+            raise JpegtranException
 
         self.tile_dir = None
         self.get_url_list(args.url, args.list)
@@ -191,31 +190,41 @@ class ImageUntiler():
         for i, image_url in enumerate(self.image_urls):
             destination = self.out_names[i]
             if len(self.image_urls) > 1:
-                print("Processing image {} ({}/{})...".format(destination, i+1, len(self.image_urls)))
-
-            if not args.base:
-                # locate the base directory of the zoomify tile images
-                self.base_dir = self.get_base_directory(image_url)
-            else:
-                self.base_dir = image_url
-                if self.base_dir.endswith('/ImageProperties.xml'):
-                    self.base_dir = urllib.parse.urljoin(self.base_dir, '.')
-                self.base_dir = self.base_dir.rstrip('/') + '/'
+                print("Processing image {} ({}/{})...".format(destination, i + 1, len(self.image_urls)))
 
             try:
-                # inspect the ImageProperties.xml file to get properties, and derive the rest
-                self.get_properties(self.base_dir, args.zoom_level)
+                if not args.base:
+                    # locate the base directory of the zoomify tile images
+                    self.base_dir = self.get_base_directory(image_url)
+                else:
+                    self.base_dir = image_url
+                    if self.base_dir.endswith('/ImageProperties.xml'):
+                        self.base_dir = urllib.parse.urljoin(self.base_dir, '.')
+                    self.base_dir = self.base_dir.rstrip('/') + '/'
 
-                # create the directory where the tiles are stored
-                self.setup_tile_directory(self.store, destination)
+                try:
+                    # inspect the ImageProperties.xml file to get properties, and derive the rest
+                    self.get_properties(self.base_dir, args.zoom_level)
 
-                # download and join tiles to create the dezoomified file
-                self.untile_image(destination)
+                    # create the directory where the tiles are stored
+                    self.setup_tile_directory(self.store, destination)
 
-            finally:
-                if not self.store and self.tile_dir:
-                    shutil.rmtree(self.tile_dir)
-                    self.log.info("Erased the temporary directory and its contents")
+                    # download and join tiles to create the dezoomified file
+                    self.untile_image(destination)
+
+                finally:
+                    if not self.store and self.tile_dir:
+                        shutil.rmtree(self.tile_dir)
+                        self.log.info("Erased the temporary directory and its contents")
+            except FileNotFoundError:
+                pass
+            except JpegtranException:
+                pass
+            except Exception as e:
+                if len(self.image_urls) > 1:
+                    self.log.warning("Unknown exception occurred while processing image {}: {} ()".format(image_url, e.__class__.__name__, e))
+                else:
+                    raise
 
             self.log.info("Dezoomifed image created and saved to " + destination)
 
@@ -231,18 +240,18 @@ class ImageUntiler():
         # Progressbars for downloading and joining.
         if progressbar:
             download_progressbar = progressbar.ProgressBar(
-                widgets = ['Downloading tiles: ',
-                           progressbar.Counter(), '/', str(self.num_tiles), ' ',
-                           progressbar.Bar('>', left='[', right=']'), ' ',
-                           progressbar.ETA()],
-                maxval = self.num_tiles
+                widgets=['Downloading tiles: ',
+                         progressbar.Counter(), '/', str(self.num_tiles), ' ',
+                         progressbar.Bar('>', left='[', right=']'), ' ',
+                         progressbar.ETA()],
+                maxval=self.num_tiles
             )
             joining_progressbar = progressbar.ProgressBar(
-                widgets = ['Joining tiles: ',
-                           progressbar.Counter(), '/', str(self.num_tiles), ' ',
-                           progressbar.Bar('>', left='[', right=']'), ' ',
-                           progressbar.ETA()],
-                maxval = self.num_tiles
+                widgets=['Joining tiles: ',
+                         progressbar.Counter(), '/', str(self.num_tiles), ' ',
+                         progressbar.Bar('>', left='[', right=']'), ' ',
+                         progressbar.ETA()],
+                maxval=self.num_tiles
             )
             download_progressbar.start()
             if self.no_download:
@@ -301,7 +310,7 @@ class ImageUntiler():
             # Use 4 temporary files for the joining process.
             tmpimgs = []
             finalimage = []
-            tempinfo = {'tmp_' : tmpimgs, 'final_' : finalimage}
+            tempinfo = {'tmp_': tmpimgs, 'final_': finalimage}
             for i in range(2):
                 for f in iter(tempinfo):
                     fhandle = tempfile.NamedTemporaryFile(suffix='.jpg', prefix=f, dir=self.tile_dir, delete=False)
@@ -311,7 +320,7 @@ class ImageUntiler():
 
             # The index of current_col temp image to be used for input, toggles between 0 and 1.
             active_tmp = 0
-            active_final= 0
+            active_final = 0
 
             # Join tiles into a single image in parallel to them being downloaded.
             try:
@@ -331,7 +340,7 @@ class ImageUntiler():
                         # with the target column dimensions.
                         # Don't reuse old tempfile without overwriting it first -
                         # if the file is broken, we want an empty space instead of an image from previous iteration.
-                        if tile_in_column == 0 and not current_col == self.x_tiles-1:
+                        if tile_in_column == 0 and not current_col == self.x_tiles - 1:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-copy', 'all',
                                 '-crop', '{:d}x{:d}+0+0'.format(self.tile_size, self.height),
@@ -340,7 +349,7 @@ class ImageUntiler():
                             ])
                             subproc.wait()
                         # Last column may have different width - create tempfile with correct dimensions
-                        elif tile_in_column == 0 and current_col == self.x_tiles-1:
+                        elif tile_in_column == 0 and current_col == self.x_tiles - 1:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-copy', 'all',
                                 '-crop', '{:d}x{:d}+0+0'.format(self.width - ((self.x_tiles - 1) * self.tile_size), self.height),
@@ -364,7 +373,7 @@ class ImageUntiler():
 
                         # After untiling of a first column,
                         # create a full sized temp image with the just untiled column
-                        if tile_in_column == self.y_tiles-1 and current_col == 0:
+                        if tile_in_column == self.y_tiles - 1 and current_col == 0:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-perfect',
                                 '-copy', 'all',
@@ -378,7 +387,7 @@ class ImageUntiler():
                             active_final = (active_final + 1) % 2
                             active_tmp = (active_tmp + 1) % 2
                         # Drop just untiled column (other then first) into the full sized temp image.
-                        elif tile_in_column == self.y_tiles-1 and not current_col == 0:
+                        elif tile_in_column == self.y_tiles - 1 and not current_col == 0:
                             subproc = subprocess.Popen([self.jpegtran,
                                 '-perfect',
                                 '-copy', 'all',
@@ -412,7 +421,7 @@ class ImageUntiler():
                         "You might want to download the image at a different zoom level "
                         "(currently {2}) to get the missing part{1}."
                         .format(num_missing, '' if num_missing == 1 else 's', self.zoom_level,
-                            output_destination)
+                                output_destination)
                     )
                 if progressbar and joining_progressbar.start_time is not None:
                     joining_progressbar.finish()
@@ -433,6 +442,7 @@ class ImageUntiler():
             # jplarge(self, joining_progressbar)
         # elif self.algorithm == 'jt_std':
             # jpstandard(self, joining_progressbar)
+
         jplarge(self, joining_progressbar)
 
     def get_url_list(self, url, use_list):
@@ -506,13 +516,13 @@ class UntilerDezoomify(ImageUntiler):
         try:
             with open_url(url) as handle:
                 content = handle.read().decode(errors='ignore')
-        except Exception:
+        except Exception as e:
             self.log.error(
                 "Specified directory not found ({}).\n"
                 "Check the URL: {}"
-                .format(sys.exc_info()[1], url)
+                .format(e, url)
             )
-            sys.exit()
+            raise FileNotFoundError
 
         image_path = None
         image_path_regexes = [
@@ -530,9 +540,9 @@ class UntilerDezoomify(ImageUntiler):
 
         if not image_path:
             self.log.error("Zoomify base directory not found. "
-            "Ensure the given URL contains a Zoomify object.\n"
-            "If that does not work, see \"Troubleshooting\" (http://sourceforge.net/p/dezoomify/wiki/Troubleshooting/) for additional help.")
-            sys.exit()
+                           "Ensure the given URL contains a Zoomify object.\n"
+                           "If that does not work, see \"Troubleshooting\" (http://sourceforge.net/p/dezoomify/wiki/Troubleshooting/) for additional help.")
+            raise FileNotFoundError
 
         self.log.info("Found ZoomifyImagePath: {}".format(image_path))
 
@@ -568,7 +578,7 @@ class UntilerDezoomify(ImageUntiler):
                 "Could not open ImageProperties.xml ({}).\n"
                 "URL: {}".format(sys.exc_info()[1], xml_url)
             )
-            sys.exit()
+            raise FileNotFoundError
 
         # example: <IMAGE_PROPERTIES WIDTH="2679" HEIGHT="4000" NUMTILES="241" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>
         properties = dict(re.findall(r"\b(\w+)\s*=\s*[\"']([^\"']*)[\"']", content))
@@ -601,7 +611,7 @@ class UntilerDezoomify(ImageUntiler):
 
         # GET THE NUMBER OF TILES AT THE REQUESTED ZOOM LEVEL
         self.maxx_tiles, self.maxy_tiles = self.levels[-1]
-        self.x_tiles,    self.y_tiles    = self.levels[self.zoom_level]
+        self.x_tiles, self.y_tiles = self.levels[self.zoom_level]
 
         self.log.info('\tMax zoom level:    {:d} (working zoom level: {:d})'.format(self.max_zoom - 1, self.zoom_level))
         self.log.info('\tWidth (overall):   {:d} (at given zoom level: {:d})'.format(self.max_width, self.width))
@@ -610,7 +620,7 @@ class UntilerDezoomify(ImageUntiler):
         self.log.info('\tWidth (in tiles):  {:d} (at given level: {:d})'.format(self.maxx_tiles, self.x_tiles))
         self.log.info('\tHeight (in tiles): {:d} (at given level: {:d})'.format(self.maxy_tiles, self.y_tiles))
         self.log.info('\tTotal tiles:       {:d} (to be retrieved: {:d})'.format(self.maxx_tiles * self.maxy_tiles,
-                                                                         self.x_tiles * self.y_tiles))
+                                                                                 self.x_tiles * self.y_tiles))
         # self.log.info("\tUsing {} joining algorithm.".format(self.algorithm))
 
     def get_zoom_levels(self):
@@ -649,7 +659,7 @@ class UntilerDezoomify(ImageUntiler):
 
         for i in range(1, level + 1):
             index += int(ceil(floor(self.width / pow(2, self.max_zoom - i)) / self.tile_size)) * \
-                int(ceil(floor(self.height / pow(2, self.max_zoom - i)) / self.tile_size))
+                     int(ceil(floor(self.height / pow(2, self.max_zoom - i)) / self.tile_size))
 
         return index
 
@@ -662,5 +672,12 @@ class UntilerDezoomify(ImageUntiler):
         url = self.base_dir + 'TileGroup{}/{}-{}-{}.{}'.format(tile_group, self.zoom_level, col, row, self.ext)
         return url
 
+
 if __name__ == "__main__":
-    main()
+    args = parser.parse_args()
+    try:
+        UntilerDezoomify(args)
+    except FileNotFoundError:
+        pass
+    except JpegtranException:
+        pass
