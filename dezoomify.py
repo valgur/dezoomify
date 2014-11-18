@@ -124,20 +124,26 @@ class JpegtranException(Exception):
 class ImageUntiler():
     def __init__(self, args):
         self.verbose = int(args.verbose)
-        self.ext = 'jpg'
         self.store = args.store
         self.out = args.out
         self.jpegtran = args.jpegtran
         self.no_download = args.no_download
-        self.nthreads = int(args.nthreads)
+        self.nthreads = args.nthreads
+        self.base = args.base
+        self.zoom_level = args.zoom_level
         # self.algorithm = args.algorithm
+        self.ext = 'jpg'
 
         if self.no_download:
             self.store = True
 
         # Set up logging.
         log_level = logging.WARNING  # default
-        if args.verbose == 1:
+        if args.verbose == 0:
+            # Disable the progressbar
+            global progressbar
+            progressbar = False
+        elif args.verbose == 1:
             log_level = logging.INFO
         elif args.verbose >= 2:
             log_level = logging.DEBUG
@@ -187,13 +193,24 @@ class ImageUntiler():
         self.tile_dir = None
         self.get_url_list(args.url, args.list)
 
+        if len(self.image_urls) == 1:
+            self.log.info("Processing image {})...".format(self.image_urls[0]))
+            self.process_image(self.image_urls[0], self.out_names[0])
+            self.log.info("Dezoomifed image created and saved to {}.".format(self.out_names[0]))
+        else:
         for i, image_url in enumerate(self.image_urls):
             destination = self.out_names[i]
-            if len(self.image_urls) > 1:
-                print("Processing image {} ({}/{})...".format(destination, i + 1, len(self.image_urls)))
-
+                self.log.info("[{}/{}] Processing image {}...".format(i + 1, len(self.image_urls), image_url))
             try:
-                if not args.base:
+                    self.process_image(image_url, destination)
+                except Exception as e:
+                    if not isinstance(e, (FileNotFoundError, JpegtranException, ZoomLevelError)):
+                        self.log.warning("Unknown exception occurred while processing image {}: {} ()".format(image_url, e.__class__.__name__, e))
+                self.log.info("Dezoomifed image created and saved to {}.".format(destination))
+
+    def process_image(self, image_url, destination):
+        """Scrapes image info and calls the untiler."""
+        if not self.base:
                     # locate the base directory of the zoomify tile images
                     self.base_dir = self.get_base_directory(image_url)
                 else:
@@ -204,7 +221,7 @@ class ImageUntiler():
 
                 try:
                     # inspect the ImageProperties.xml file to get properties, and derive the rest
-                    self.get_properties(self.base_dir, args.zoom_level)
+            self.get_properties(self.base_dir, self.zoom_level)
 
                     # create the directory where the tiles are stored
                     self.setup_tile_directory(self.store, destination)
@@ -215,18 +232,7 @@ class ImageUntiler():
                 finally:
                     if not self.store and self.tile_dir:
                         shutil.rmtree(self.tile_dir)
-                        self.log.info("Erased the temporary directory and its contents")
-            except FileNotFoundError:
-                pass
-            except JpegtranException:
-                pass
-            except Exception as e:
-                if len(self.image_urls) > 1:
-                    self.log.warning("Unknown exception occurred while processing image {}: {} ()".format(image_url, e.__class__.__name__, e))
-                else:
-                    raise
-
-            self.log.info("Dezoomifed image created and saved to " + destination)
+                self.log.debug("Erased the temporary directory and its contents")
 
     def untile_image(self, output_destination):
         """
@@ -238,6 +244,8 @@ class ImageUntiler():
         self.num_joined = 0
 
         # Progressbars for downloading and joining.
+        download_progressbar = None
+        joining_progressbar = None
         if progressbar:
             download_progressbar = progressbar.ProgressBar(
                 widgets=['Downloading tiles: ',
@@ -278,7 +286,7 @@ class ImageUntiler():
             url = self.get_tile_url(col, row)
             destination = local_tile_path(col, row)
             if not progressbar:
-                self.log.info("Downloading tile (row {:3}, col {:3})".format(row, col))
+                self.log.debug("Downloading tile (row {:3}, col {:3})".format(row, col))
             try:
                 download_url(url, destination)
             except urllib.error.HTTPError as e:
@@ -329,12 +337,12 @@ class ImageUntiler():
                 tile_in_column = 0
                 for i, (col, row) in enumerate(self.downloaded_iterator):
                     if col is None:
-                        self.log.info("Missing col tile!")
+                        self.log.debug("Missing col tile!")
                         continue # Tile failed to download.
 
                     if col == current_col:
                         if not progressbar:
-                            self.log.info("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
+                            self.log.debug("Adding tile (row {:3}, col {:3}) to the image".format(row, col))
 
                         # As the very first step create an (almost) empty temp column image,
                         # with the target column dimensions.
@@ -493,12 +501,12 @@ class ImageUntiler():
             root = os.path.splitext(output_file_name)[0]
 
             if not os.path.exists(root):
-                self.log.info("Creating image storage directory: {}".format(root))
+                self.log.debug("Creating image storage directory: {}".format(root))
                 os.makedirs(root)
             self.tile_dir = root
         else:
             self.tile_dir = tempfile.mkdtemp(prefix='dezoomify_')
-            self.log.info("Created temporary image storage directory: {}".format(self.tile_dir))
+            self.log.debug("Created temporary image storage directory: {}".format(self.tile_dir))
 
 
 class UntilerDezoomify(ImageUntiler):
@@ -544,7 +552,7 @@ class UntilerDezoomify(ImageUntiler):
                            "If that does not work, see \"Troubleshooting\" (http://sourceforge.net/p/dezoomify/wiki/Troubleshooting/) for additional help.")
             raise FileNotFoundError
 
-        self.log.info("Found ZoomifyImagePath: {}".format(image_path))
+        self.log.debug("Found ZoomifyImagePath: {}".format(image_path))
 
         image_path = urllib.parse.unquote(image_path)
         base_dir = urllib.parse.urljoin(url, image_path)
@@ -568,7 +576,7 @@ class UntilerDezoomify(ImageUntiler):
         # this file contains information about the image tiles
         xml_url = urllib.parse.urljoin(base_dir, 'ImageProperties.xml')
 
-        self.log.info("xml_url=" + xml_url)
+        self.log.debug("xml_url=" + xml_url)
         content = None
         try:
             with open_url(xml_url) as handle:
@@ -613,15 +621,15 @@ class UntilerDezoomify(ImageUntiler):
         self.maxx_tiles, self.maxy_tiles = self.levels[-1]
         self.x_tiles, self.y_tiles = self.levels[self.zoom_level]
 
-        self.log.info('\tMax zoom level:    {:d} (working zoom level: {:d})'.format(self.max_zoom - 1, self.zoom_level))
-        self.log.info('\tWidth (overall):   {:d} (at given zoom level: {:d})'.format(self.max_width, self.width))
-        self.log.info('\tHeight (overall):  {:d} (at given zoom level: {:d})'.format(self.max_height, self.height))
-        self.log.info('\tTile size:         {:d}'.format(self.tile_size))
-        self.log.info('\tWidth (in tiles):  {:d} (at given level: {:d})'.format(self.maxx_tiles, self.x_tiles))
-        self.log.info('\tHeight (in tiles): {:d} (at given level: {:d})'.format(self.maxy_tiles, self.y_tiles))
-        self.log.info('\tTotal tiles:       {:d} (to be retrieved: {:d})'.format(self.maxx_tiles * self.maxy_tiles,
+        self.log.debug('\tMax zoom level:    {:d} (working zoom level: {:d})'.format(self.max_zoom, self.zoom_level))
+        self.log.debug('\tWidth (overall):   {:d} (at given zoom level: {:d})'.format(self.max_width, self.width))
+        self.log.debug('\tHeight (overall):  {:d} (at given zoom level: {:d})'.format(self.max_height, self.height))
+        self.log.debug('\tTile size:         {:d}'.format(self.tile_size))
+        self.log.debug('\tWidth (in tiles):  {:d} (at given level: {:d})'.format(self.maxx_tiles, self.x_tiles))
+        self.log.debug('\tHeight (in tiles): {:d} (at given level: {:d})'.format(self.maxy_tiles, self.y_tiles))
+        self.log.debug('\tTotal tiles:       {:d} (to be retrieved: {:d})'.format(self.maxx_tiles * self.maxy_tiles,
                                                                                  self.x_tiles * self.y_tiles))
-        # self.log.info("\tUsing {} joining algorithm.".format(self.algorithm))
+        # self.log.debug("\tUsing {} joining algorithm.".format(self.algorithm))
 
     def get_zoom_levels(self):
         """Construct a list of all zoomlevels with sizes in tiles"""
