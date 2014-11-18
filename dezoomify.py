@@ -465,7 +465,7 @@ class ImageUntiler():
 
                     if len(line) == 1:
                         root, ext = os.path.splitext(self.out)
-                        self.out_names.append("{}{:03d}{}".format(root, i, ext))
+                        self.out_names.append("{}_{:03d}{}".format(root, i, ext))
                         i += 1
                     elif len(line) == 2:
                         # allow filenames to lack extensions
