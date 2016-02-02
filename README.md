@@ -28,7 +28,7 @@ Authors
 Dezoomify is the work of:
 
    * inductiveload <inductiveload@gmail.com>
-   * Martin Valgur <martin@valgur.ee>
+   * Martin Valgur <martin.valgur@gmail.com>
    * Lukáš Říha <cedel@centrum.cz>
 
 Acknowledgements
